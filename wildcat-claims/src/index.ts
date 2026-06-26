@@ -3,6 +3,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
+import { getAddress } from 'ethers';
 
 import { loadConfig } from './wildcat/config';
 import { Chain } from './wildcat/chain';
@@ -10,7 +11,6 @@ import { Eligibility } from './wildcat/eligibility';
 import {
   getFormDataError,
   verifySignature,
-  computeMarketsHash,
   chainIdFor,
   domainFor,
   toAccount,
@@ -18,6 +18,14 @@ import {
 } from './utils';
 import database from './database';
 import { Sheets } from './sheets';
+
+function asAddress(v: unknown): string | null {
+  try {
+    return typeof v === 'string' ? getAddress(v) : null;
+  } catch {
+    return null;
+  }
+}
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -36,14 +44,6 @@ async function main(): Promise<void> {
     console.warn('.google.json not found — sheet mirroring disabled.');
   }
 
-  // Resolve the eligibility block + scoped market set up front so the first request is fast.
-  await Promise.all([
-    chain.resolveEligibilityBlock().then((b) => console.log(`Eligibility block: ${b}`)),
-    eligibility.getScopedMarkets(true).then((m) => console.log(`Scoped markets: ${m.length}`)),
-  ]).catch((e) => console.error('Startup priming failed:', e.message));
-
-  const signedTimestamp = cfg.eligibilityTimestamp ?? 0;
-
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -51,33 +51,40 @@ async function main(): Promise<void> {
   app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
 
   // Public config the frontend needs to render context and build EIP-712 typed data.
-  app.get('/config', async (_req, res) => {
-    return res.json({
+  app.get('/config', (_req, res) =>
+    res.json({
       network: cfg.network,
       chainId: chainIdFor(cfg.network),
-      incidentId: cfg.incidentId,
-      eligibilityTimestamp: signedTimestamp,
-      scopedMarkets: await eligibility.getScopedMarkets(),
+      borrower: cfg.borrower ?? null,
+      defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
       domain: domainFor(cfg.network),
-    });
+    })
+  );
+
+  // Discover a borrower's markets (with names + live default status) for selection.
+  app.post('/markets', async (req: Request, res: Response) => {
+    const borrower = asAddress((req.body ?? {}).borrower);
+    if (!borrower) return res.status(400).send('Invalid borrower address');
+    try {
+      return res.json({ borrower, markets: await eligibility.getBorrowerMarkets(borrower) });
+    } catch (err: any) {
+      console.error(`/markets ${borrower}:`, err.message);
+      return res.status(500).send('Failed to load borrower markets');
+    }
   });
 
-  // Pre-check: which scoped markets did this account hold debt in at the threshold?
-  // Returns the canonical claim context the client must sign verbatim.
+  // Check one lender against one market; returns the canonical claim context to sign.
   app.post('/eligibility', async (req: Request, res: Response) => {
-    const { account } = req.body ?? {};
-    if (typeof account !== 'string') return res.status(400).send('Missing account');
+    const { account: rawAccount, market: rawMarket } = req.body ?? {};
+    const account = asAddress(rawAccount);
+    const market = asAddress(rawMarket);
+    if (!account) return res.status(400).send('Invalid account address');
+    if (!market) return res.status(400).send('Invalid market address');
     try {
-      const result = await eligibility.eligibleClaims(account);
-      const marketsHash = computeMarketsHash(result.claims.map((c) => c.market));
-      return res.json({
-        ...result,
-        chainId: chainIdFor(cfg.network),
-        incidentId: cfg.incidentId,
-        claim: { network: cfg.network, eligibilityTimestamp: signedTimestamp, marketsHash },
-      });
+      const result = await eligibility.eligibleClaim(account, market);
+      return res.json({ ...result, claim: { network: cfg.network, market } });
     } catch (err: any) {
-      console.error(`/eligibility ${account}:`, err.message);
+      console.error(`/eligibility ${account}/${market}:`, err.message);
       return res.status(500).send('Failed to compute eligibility');
     }
   });
@@ -92,11 +99,9 @@ async function main(): Promise<void> {
     const formError = getFormDataError(data.form);
     if (formError) return res.status(400).send(formError);
 
-    // The signed context must match this deployment's incident scope, not the client's.
     if (data.claim.network !== cfg.network) return res.status(409).send('Wrong network');
-    if (Number(data.claim.eligibilityTimestamp) !== signedTimestamp) {
-      return res.status(409).send('Stale eligibility threshold — please refresh and re-sign');
-    }
+    const market = asAddress(data.claim.market);
+    if (!market) return res.status(400).send('Invalid market address');
 
     // Recover signer.
     let address: string;
@@ -106,34 +111,22 @@ async function main(): Promise<void> {
       return res.status(400).send('Invalid signature');
     }
 
-    // Server-side re-check: never trust client-supplied eligibility.
+    // Server-side re-check (live): never trust client-supplied eligibility.
     let result;
     try {
-      result = await eligibility.eligibleClaims(address);
+      result = await eligibility.eligibleClaim(address, market);
     } catch (err: any) {
       console.error('/submit eligibility check:', err.message);
       return res.status(500).send('Failed to verify eligibility');
     }
-    if (result.claims.length === 0) {
-      return res.status(400).send('No eligible claims for this address');
+    if (!result.inDefault) {
+      return res.status(400).send('Market is not in default');
+    }
+    if (!result.eligible) {
+      return res.status(400).send('No eligible position for this address in this market');
     }
 
-    // The signature must commit to exactly the markets the server found.
-    const serverHash = computeMarketsHash(result.claims.map((c) => c.market));
-    if (serverHash.toLowerCase() !== data.claim.marketsHash.toLowerCase()) {
-      return res.status(409).send('Eligibility changed since signing — please re-sign');
-    }
-
-    const account = toAccount(
-      address,
-      data.form,
-      data.claim,
-      signature,
-      result.claims,
-      result.totalOwedWei,
-      cfg.incidentId,
-      result.blockNumber
-    );
+    const account = toAccount(address, data.form, data.claim, signature, result);
 
     try {
       await database.putAccount(account);
@@ -151,7 +144,7 @@ async function main(): Promise<void> {
       }
     }
 
-    return res.json({ ok: true, markets: result.claims.length, totalOwedWei: result.totalOwedWei });
+    return res.json({ ok: true, market, totalOwedWei: result.amountOwedWei });
   });
 
   // Optionally serve a built frontend if present.

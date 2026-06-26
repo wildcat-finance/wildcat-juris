@@ -18,28 +18,20 @@ export interface WildcatConfig {
   addresses: WildcatAddresses;
 
   /**
-   * Per-market scoping: the incident's in-scope markets. Eligibility is only
-   * evaluated against these. If empty, the service falls back to enumerating
-   * every registered market (discovery), which is the pre-incident default.
+   * A market is "in default" when its grace tracker has run this many seconds past
+   * the grace period: timeDelinquent >= delinquencyGracePeriod + defaultBufferSec.
+   * Evaluated live. Default: 90 days.
    */
-  scopedMarkets: string[];
+  defaultBufferSec: number;
 
   /**
-   * Eligibility threshold as a unix timestamp (seconds). Reads are pinned to the
-   * last block at or before this instant, so eligibility answers "was this lender
-   * holding debt in a scoped market as of this time?". Requires an archive node.
-   * Undefined => read at 'latest'.
+   * Optional borrower address to pre-fill on the frontend. The borrower's markets are
+   * discovered on-chain; lenders then pick one. If unset, the field starts empty.
    */
-  eligibilityTimestamp?: number;
+  borrower?: string;
 
-  /**
-   * Explicit block override. If set, used directly and timestamp resolution is
-   * skipped (also requires an archive node for historical reads).
-   */
+  /** Optional block override for reads (audit/testing). Undefined => 'latest' (live). */
   snapshotBlock?: number;
-
-  /** Label used to namespace stored claims so separate incidents never collide. */
-  incidentId: string;
 
   /** Include queued/expired withdrawal-batch amounts in a lender's owed total. */
   includeWithdrawals: boolean;
@@ -76,32 +68,13 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
-/** Parse a comma/space/newline-separated list of checksummed addresses. */
-function parseAddressList(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => getAddress(s));
-}
-
-/** Accept either a unix-seconds integer or an ISO-8601 date string. */
-function parseTimestamp(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const trimmed = raw.trim();
-  if (/^\d+$/.test(trimmed)) return Number(trimmed);
-  const ms = Date.parse(trimmed);
-  if (Number.isNaN(ms)) throw new Error(`Invalid ELIGIBILITY_TIMESTAMP: ${raw}`);
-  return Math.floor(ms / 1000);
-}
+const DAY_SEC = 86_400;
 
 export function loadConfig(): WildcatConfig {
   const network = process.env.WILDCAT_NETWORK ?? 'mainnet';
   const base = DEPLOYMENTS[network];
   if (!base) throw new Error(`Unknown WILDCAT_NETWORK: ${network}`);
 
-  // Allow per-address env overrides on top of the network defaults.
   const addresses: WildcatAddresses = {
     archController: getAddress(
       required('ARCH_CONTROLLER', process.env.ARCH_CONTROLLER ?? base.archController)
@@ -114,15 +87,15 @@ export function loadConfig(): WildcatConfig {
   };
 
   const lensMode: LensMode = (process.env.LENS_MODE ?? 'lens') === 'direct' ? 'direct' : 'lens';
+  const bufferDays = Number(process.env.DEFAULT_BUFFER_DAYS ?? '90');
 
   return {
     network,
     rpcUrl: required('RPC_URL', process.env.RPC_URL),
     addresses,
-    scopedMarkets: parseAddressList(process.env.SCOPED_MARKETS),
-    eligibilityTimestamp: parseTimestamp(process.env.ELIGIBILITY_TIMESTAMP),
+    defaultBufferSec: Math.floor(bufferDays * DAY_SEC),
+    borrower: process.env.BORROWER_ADDRESS ? getAddress(process.env.BORROWER_ADDRESS) : undefined,
     snapshotBlock: process.env.SNAPSHOT_BLOCK ? Number(process.env.SNAPSHOT_BLOCK) : undefined,
-    incidentId: process.env.INCIDENT_ID ?? 'default',
     includeWithdrawals: (process.env.INCLUDE_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,

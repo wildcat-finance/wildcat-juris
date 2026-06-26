@@ -5,39 +5,35 @@ import {
   domainFor,
   EIP712_TYPES,
   toSignatureString,
-  computeMarketsHash,
   type FormData,
   type SignedClaimContext,
 } from '../src/utils';
+
+const MARKET_A = getAddress('0x00000000000000000000000000000000000000a1');
+const MARKET_B = getAddress('0x00000000000000000000000000000000000000b2');
 
 const form: FormData = {
   name: 'Ada Lovelace',
   email: 'ada@example.io',
   other: '',
   country: 'US',
-  state: 'CA',
-  city: '',
   acceptTerms: true,
   willingToSpeakToLEO: false,
   willingToLitigate: true,
 };
 
-const claim: SignedClaimContext = {
-  network: 'mainnet',
-  eligibilityTimestamp: 1_700_000_000,
-  marketsHash: computeMarketsHash(['0xabc', '0xdef']),
-};
+const claim: SignedClaimContext = { network: 'mainnet', market: MARKET_A };
 
 // Mirrors the structure the frontend signs (and the server reconstructs internally).
 const typedValue = (f: FormData, c: SignedClaimContext) => ({
   contactInfo: { name: f.name, email: f.email, other: f.other },
-  location: { country: f.country, state: f.state, city: f.city },
+  location: { country: f.country },
   options: {
     acceptTerms: f.acceptTerms,
     willingToSpeakToLEO: f.willingToSpeakToLEO,
     willingToLitigate: f.willingToLitigate,
   },
-  claim: { network: c.network, eligibilityTimestamp: c.eligibilityTimestamp, marketsHash: c.marketsHash },
+  claim: { network: c.network, market: c.market },
 });
 
 describe('signature verification', () => {
@@ -53,11 +49,12 @@ describe('signature verification', () => {
     expect(getAddress(verifySignature(form, claim, 'personal_sign_' + sig))).toBe(getAddress(w.address));
   });
 
-  it('does not recover the signer when the committed market set is tampered', async () => {
+  it('does not recover the signer when the committed market is swapped', async () => {
     const w = Wallet.createRandom();
     const sig = await w.signTypedData(domainFor(claim.network), EIP712_TYPES, typedValue(form, claim));
-    const tampered = { ...claim, marketsHash: computeMarketsHash(['0xother']) };
-    expect(getAddress(verifySignature(form, tampered, sig))).not.toBe(getAddress(w.address));
+    expect(getAddress(verifySignature(form, { ...claim, market: MARKET_B }, sig))).not.toBe(
+      getAddress(w.address)
+    );
   });
 
   it('does not recover the signer when replayed against another network (chainId-bound)', async () => {

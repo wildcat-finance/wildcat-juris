@@ -1,114 +1,140 @@
 import { describe, it, expect } from 'vitest';
 import { Eligibility } from '../src/wildcat/eligibility';
-import { computeMarketsHash } from '../src/utils';
-import type { Chain, MarketSnapshot, MarketLenderData } from '../src/wildcat/chain';
+import type { Chain, MarketInfo, MarketState } from '../src/wildcat/chain';
 import type { WildcatConfig } from '../src/wildcat/config';
+
+const BUFFER = 90 * 86_400; // 7,776,000s
 
 const baseCfg: WildcatConfig = {
   network: 'mainnet',
   rpcUrl: 'http://localhost',
   addresses: { archController: '', marketLens: '', hooksFactory: '', sanctionsSentinel: '' },
-  scopedMarkets: [],
-  eligibilityTimestamp: 1_700_000_000,
-  incidentId: 'test',
+  defaultBufferSec: BUFFER,
   includeWithdrawals: true,
   minOwedWei: 0n,
   lensMode: 'lens',
 };
 
-const snap = (over: Partial<MarketSnapshot>): MarketSnapshot => ({
-  market: '0xMARKET',
+const info = (market: string, over: Partial<MarketInfo> = {}): MarketInfo => ({
+  market,
   borrower: '0xBORROWER',
+  name: 'Market ' + market,
   asset: '0xASSET',
   assetSymbol: 'TOK',
   assetDecimals: 18,
-  isClosed: false,
-  isDelinquent: false,
-  timeDelinquent: 0n,
-  delinquencyGracePeriod: 1000n,
-  penaltyActive: false,
   ...over,
 });
 
-const md = (
-  market: string,
-  heldWei: bigint,
-  withdrawalsWei = 0n,
-  over: Partial<MarketSnapshot> = {}
-): MarketLenderData => ({
-  snapshot: snap({ market, ...over }),
-  heldWei,
-  withdrawalsWei,
-  withdrawalsError: false,
+const state = (over: Partial<MarketState> = {}): MarketState => ({
+  isClosed: false,
+  isDelinquent: true,
+  timeDelinquent: 0n,
+  delinquencyGracePeriod: 1000n,
+  ...over,
 });
 
-function fakeChain(data: Record<string, MarketLenderData>, block = 12345): Chain {
+// timeDelinquent values that sit either side of the default line (grace = 1000).
+const DEFAULTED = BigInt(1000 + BUFFER); // exactly at the threshold -> in default
+const NOT_DEFAULTED = 2000n; // past grace (penalty) but not yet in default
+
+interface FakeOpts {
+  infos?: Record<string, MarketInfo>;
+  states?: Record<string, MarketState>;
+  held?: Record<string, bigint>;
+  withdrawals?: Record<string, bigint>;
+  block?: number;
+}
+
+function fakeChain(o: FakeOpts): Chain {
   return {
-    resolveEligibilityBlock: async () => block,
-    getAllMarkets: async () => Object.keys(data),
-    readEligibilityData: async (market: string) => data[market],
+    resolveAsOfBlock: async () => o.block ?? 999,
+    getMarketInfo: async (m: string) => o.infos![m],
+    getMarketState: async (m: string) => o.states![m],
+    getMarketsForBorrower: async (b: string) =>
+      Object.values(o.infos ?? {}).filter((i) => i.borrower.toLowerCase() === b.toLowerCase()),
+    readLenderHeld: async (m: string) => o.held?.[m] ?? 0n,
+    readWithdrawalsOwed: async (m: string) => o.withdrawals?.[m] ?? 0n,
   } as unknown as Chain;
 }
 
-describe('eligibleClaims (per-market + timestamp scoping)', () => {
-  it('includes scoped markets with a non-dust position and sums held + withdrawals', async () => {
-    const data = {
-      '0xHELD': md('0xHELD', 100n), // held only -> 100
-      '0xWD': md('0xWD', 0n, 50n), // withdrawals only -> 50
-      '0xBOTH': md('0xBOTH', 30n, 20n), // held + withdrawals -> 50
-      '0xCLOSED': md('0xCLOSED', 70n, 0n, { isClosed: true }), // closed-but-unpaid -> included
-      '0xEMPTY': md('0xEMPTY', 0n, 0n), // nothing -> excluded
-    };
-    const cfg = { ...baseCfg, scopedMarkets: Object.keys(data) };
-    const e = new Eligibility(fakeChain(data), cfg);
-    const result = await e.eligibleClaims('0xLENDER');
-
-    expect(result.claims.map((c) => c.market).sort()).toEqual(['0xBOTH', '0xCLOSED', '0xHELD', '0xWD']);
-    expect(result.totalOwedWei).toBe('270'); // 100 + 50 + 50 + 70
-    expect(result.blockNumber).toBe(12345);
-    expect(result.eligibilityTimestamp).toBe(1_700_000_000);
-
-    const both = result.claims.find((c) => c.market === '0xBOTH')!;
-    expect(both.heldOwedWei).toBe('30');
-    expect(both.withdrawalsOwedWei).toBe('20');
-    expect(both.amountOwedWei).toBe('50');
+describe('eligibleClaim (live default gate)', () => {
+  it('is eligible when the market is in default and the lender holds a non-dust balance', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 100n },
+      block: 12345,
+    });
+    const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM');
+    expect(r.inDefault).toBe(true);
+    expect(r.eligible).toBe(true);
+    expect(r.amountOwedWei).toBe('100');
+    expect(r.asOfBlock).toBe(12345);
   });
 
-  it('has no live-distress gate: a healthy scoped market with a balance is still eligible', async () => {
-    const data = { '0xHEALTHY': md('0xHEALTHY', 42n) }; // isDelinquent=false, penaltyActive=false
-    const cfg = { ...baseCfg, scopedMarkets: ['0xHEALTHY'] };
-    const e = new Eligibility(fakeChain(data), cfg);
-    const result = await e.eligibleClaims('0xLENDER');
-    expect(result.claims).toHaveLength(1);
-    expect(result.totalOwedWei).toBe('42');
+  it('sums held + withdrawals into the owed total', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 30n },
+      withdrawals: { '0xM': 20n },
+    });
+    const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM');
+    expect(r.heldOwedWei).toBe('30');
+    expect(r.withdrawalsOwedWei).toBe('20');
+    expect(r.amountOwedWei).toBe('50');
+    expect(r.eligible).toBe(true);
   });
 
-  it('respects the dust threshold against the combined held + withdrawals total', async () => {
-    const data = {
-      '0xUNDER': md('0xUNDER', 5n, 4n), // 9 -> excluded
-      '0xOVER': md('0xOVER', 5n, 6n), // 11 -> included
-    };
-    const cfg = { ...baseCfg, scopedMarkets: Object.keys(data), minOwedWei: 10n };
-    const e = new Eligibility(fakeChain(data), cfg);
-    const result = await e.eligibleClaims('0xLENDER');
-    expect(result.claims.map((c) => c.market)).toEqual(['0xOVER']);
+  it('is NOT eligible when the market is not in default, even with a balance', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: NOT_DEFAULTED }) },
+      held: { '0xM': 100n },
+    });
+    const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM');
+    expect(r.inDefault).toBe(false);
+    expect(r.eligible).toBe(false);
   });
 
-  it('falls back to enumerating all markets when no scope is configured', async () => {
-    const data = { '0xA': md('0xA', 10n), '0xB': md('0xB', 0n) };
-    const e = new Eligibility(fakeChain(data), { ...baseCfg, scopedMarkets: [] });
-    const markets = await e.getScopedMarkets();
-    expect(markets.sort()).toEqual(['0xA', '0xB']); // discovered via getAllMarkets
-    const result = await e.eligibleClaims('0xLENDER');
-    expect(result.claims.map((c) => c.market)).toEqual(['0xA']);
+  it('is NOT eligible when in default but the lender holds nothing', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 0n },
+    });
+    const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM');
+    expect(r.eligible).toBe(false);
+  });
+
+  it('respects the dust threshold on the combined total', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 5n },
+      withdrawals: { '0xM': 4n }, // 9 < 10
+    });
+    const r = await new Eligibility(chain, { ...baseCfg, minOwedWei: 10n }).eligibleClaim('0xLENDER', '0xM');
+    expect(r.eligible).toBe(false);
   });
 });
 
-describe('computeMarketsHash', () => {
-  it('is order-independent and case-insensitive', () => {
-    expect(computeMarketsHash(['0xAbC', '0xDeF'])).toBe(computeMarketsHash(['0xdef', '0xabc']));
-  });
-  it('differs for different market sets', () => {
-    expect(computeMarketsHash(['0xabc'])).not.toBe(computeMarketsHash(['0xabc', '0xdef']));
+describe('getBorrowerMarkets', () => {
+  it('returns only the borrower’s markets, flags default status, defaulted first', async () => {
+    const infos = {
+      '0xHEALTHY': info('0xHEALTHY', { name: 'Zebra', borrower: '0xB' }),
+      '0xDEFAULT': info('0xDEFAULT', { name: 'Alpha', borrower: '0xB' }),
+      '0xOTHER': info('0xOTHER', { borrower: '0xSOMEONE_ELSE' }),
+    };
+    const states = {
+      '0xHEALTHY': state({ timeDelinquent: 0n, isDelinquent: false }),
+      '0xDEFAULT': state({ timeDelinquent: DEFAULTED }),
+    };
+    const chain = fakeChain({ infos, states });
+    const out = await new Eligibility(chain, baseCfg).getBorrowerMarkets('0xB');
+
+    expect(out.map((m) => m.market)).toEqual(['0xDEFAULT', '0xHEALTHY']); // defaulted first
+    expect(out.find((m) => m.market === '0xDEFAULT')!.inDefault).toBe(true);
+    expect(out.find((m) => m.market === '0xHEALTHY')!.inDefault).toBe(false);
   });
 });

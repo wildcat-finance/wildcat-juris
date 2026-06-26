@@ -2,30 +2,22 @@ import { Contract, JsonRpcProvider, type BlockTag } from 'ethers';
 import { WildcatConfig } from './config';
 import { ARCH_CONTROLLER_ABI, MARKET_ABI, ERC20_ABI, LENS_ABI } from './abis';
 
-/** Market state relevant to attribution + delinquency reporting (metadata only). */
-export interface MarketSnapshot {
+/** Immutable market identity (cached). */
+export interface MarketInfo {
   market: string;
   borrower: string;
+  name: string;
   asset: string;
   assetSymbol: string;
   assetDecimals: number;
+}
+
+/** Live market state relevant to the default gate. */
+export interface MarketState {
   isClosed: boolean;
   isDelinquent: boolean;
   timeDelinquent: bigint;
   delinquencyGracePeriod: bigint;
-  /** True if the penalty APR is active (rolling grace period exceeded). */
-  penaltyActive: boolean;
-}
-
-/** Everything needed to evaluate one lender against one market at the pinned block. */
-export interface MarketLenderData {
-  snapshot: MarketSnapshot;
-  /** Held market-token position (balanceOf / lens normalizedBalance), underlying wei. */
-  heldWei: bigint;
-  /** Lender's share of queued/expired withdrawal batches, underlying wei (0 if disabled). */
-  withdrawalsWei: bigint;
-  /** True if the withdrawal read failed and the figure may be incomplete. */
-  withdrawalsError: boolean;
 }
 
 const MARKETS_PAGE = 100n;
@@ -36,7 +28,7 @@ export class Chain {
   readonly arch: Contract;
   readonly lens: Contract;
   private readonly cfg: WildcatConfig;
-  private resolvedBlock?: number;
+  private readonly infoCache = new Map<string, MarketInfo>();
   private lensWarned = false;
 
   constructor(cfg: WildcatConfig) {
@@ -50,44 +42,18 @@ export class Chain {
     return new Contract(address, MARKET_ABI, this.provider);
   }
 
-  /**
-   * The block all reads are pinned to: explicit snapshotBlock, else the block at/just
-   * before the eligibility timestamp, else 'latest'. Resolved once and memoised.
-   */
-  async resolveEligibilityBlock(): Promise<number> {
-    if (this.resolvedBlock !== undefined) return this.resolvedBlock;
-    if (this.cfg.snapshotBlock !== undefined) {
-      this.resolvedBlock = this.cfg.snapshotBlock;
-    } else if (this.cfg.eligibilityTimestamp !== undefined) {
-      this.resolvedBlock = await this.blockForTimestamp(this.cfg.eligibilityTimestamp);
-    } else {
-      this.resolvedBlock = await this.provider.getBlockNumber();
-    }
-    return this.resolvedBlock;
+  private blockTag(): BlockTag {
+    return this.cfg.snapshotBlock ?? 'latest';
   }
 
-  private async blockTag(): Promise<BlockTag> {
-    return this.resolveEligibilityBlock();
-  }
-
-  /** Highest block whose timestamp is <= target (binary search). */
-  private async blockForTimestamp(targetSec: number): Promise<number> {
-    let lo = 1;
-    let hi = await this.provider.getBlockNumber();
-    const latest = await this.provider.getBlock(hi);
-    if (latest && Number(latest.timestamp) <= targetSec) return hi;
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi + 1) / 2);
-      const block = await this.provider.getBlock(mid);
-      if (block && Number(block.timestamp) <= targetSec) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
+  /** Block the reads resolve to, recorded in each claim for audit. */
+  async resolveAsOfBlock(): Promise<number> {
+    return this.cfg.snapshotBlock ?? this.provider.getBlockNumber();
   }
 
   /** Enumerate every market registered on the arch-controller (paginated). */
   async getAllMarkets(): Promise<string[]> {
-    const tag = await this.blockTag();
+    const tag = this.blockTag();
     const count: bigint = await this.arch.getRegisteredMarketsCount({ blockTag: tag });
     const markets: string[] = [];
     for (let i = 0n; i < count; i += MARKETS_PAGE) {
@@ -99,105 +65,74 @@ export class Chain {
     return markets;
   }
 
-  /**
-   * Read market metadata + the lender's held position, via the lens when configured,
-   * and fold in withdrawal-batch amounts. Lens decode failures auto-fall-back to the
-   * verified direct path (warned once).
-   */
-  async readEligibilityData(market: string, lender: string): Promise<MarketLenderData> {
-    const tag = await this.blockTag();
+  /** Immutable market identity (borrower, name, asset, token metadata). Cached. */
+  async getMarketInfo(market: string): Promise<MarketInfo> {
+    const key = market.toLowerCase();
+    const cached = this.infoCache.get(key);
+    if (cached) return cached;
 
-    let base: { snapshot: MarketSnapshot; heldWei: bigint };
+    const m = this.market(market);
+    const tag = { blockTag: this.blockTag() };
+    const [borrower, name, asset] = await Promise.all([m.borrower(tag), m.name(tag), m.asset(tag)]);
+    const token = new Contract(asset, ERC20_ABI, this.provider);
+    const [symbol, decimals] = await Promise.all([token.symbol(tag), token.decimals(tag)]);
+
+    const info: MarketInfo = {
+      market,
+      borrower,
+      name,
+      asset,
+      assetSymbol: symbol,
+      assetDecimals: Number(decimals),
+    };
+    this.infoCache.set(key, info);
+    return info;
+  }
+
+  /** Live delinquency state (verified currentState path). */
+  async getMarketState(market: string): Promise<MarketState> {
+    const m = this.market(market);
+    const tag = { blockTag: this.blockTag() };
+    const [state, grace] = await Promise.all([m.currentState(tag), m.delinquencyGracePeriod(tag)]);
+    return {
+      isClosed: state.isClosed,
+      isDelinquent: state.isDelinquent,
+      timeDelinquent: BigInt(state.timeDelinquent),
+      delinquencyGracePeriod: BigInt(grace),
+    };
+  }
+
+  /** Markets whose immutable borrower matches `borrower`. */
+  async getMarketsForBorrower(borrower: string): Promise<MarketInfo[]> {
+    const all = await this.getAllMarkets();
+    const target = borrower.toLowerCase();
+    const infos = await Promise.all(all.map((m) => this.getMarketInfo(m)));
+    return infos.filter((i) => i.borrower.toLowerCase() === target);
+  }
+
+  /**
+   * A lender's held market-token position (underlying wei). Uses the lens when
+   * configured; a decode failure auto-falls-back to the verified balanceOf path.
+   */
+  async readLenderHeld(market: string, lender: string): Promise<bigint> {
+    const tag = this.blockTag();
     if (this.cfg.lensMode === 'lens') {
       try {
-        base = await this.readViaLens(market, lender, tag);
+        const res = await this.lens.getMarketDataWithLenderStatus(lender, market, { blockTag: tag });
+        const ls = res.lenderStatus ?? res[1];
+        return BigInt(ls.normalizedBalance);
       } catch (err: any) {
         if (!this.lensWarned) {
           console.warn(
-            `MarketLens read failed (${err.message}); falling back to direct reads. ` +
+            `MarketLens read failed (${err.message}); falling back to balanceOf. ` +
               'Verify LENS_ABI against the deployed MarketLens artifact to enable the lens path.'
           );
           this.lensWarned = true;
         }
-        base = await this.readDirect(market, lender, tag);
-      }
-    } else {
-      base = await this.readDirect(market, lender, tag);
-    }
-
-    let withdrawalsWei = 0n;
-    let withdrawalsError = false;
-    if (this.cfg.includeWithdrawals) {
-      try {
-        withdrawalsWei = await this.readWithdrawalsOwed(market, lender, tag);
-      } catch (err: any) {
-        withdrawalsError = true;
-        console.error(`Withdrawal read failed for ${market}/${lender}: ${err.message}`);
       }
     }
-
-    return { ...base, withdrawalsWei, withdrawalsError };
-  }
-
-  /** Combined market + lender read via MarketLens.getMarketDataWithLenderStatus. */
-  private async readViaLens(
-    market: string,
-    lender: string,
-    tag: BlockTag
-  ): Promise<{ snapshot: MarketSnapshot; heldWei: bigint }> {
-    const res = await this.lens.getMarketDataWithLenderStatus(lender, market, { blockTag: tag });
-    const md = res.marketData ?? res[0];
-    const ls = res.lenderStatus ?? res[1];
-    const timeDelinquent = BigInt(md.timeDelinquent);
-    const grace = BigInt(md.delinquencyGracePeriod);
-    const snapshot: MarketSnapshot = {
-      market,
-      borrower: md.borrower,
-      asset: md.asset,
-      assetSymbol: md.assetSymbol,
-      assetDecimals: Number(md.assetDecimals),
-      isClosed: md.isClosed,
-      isDelinquent: md.isDelinquent,
-      timeDelinquent,
-      delinquencyGracePeriod: grace,
-      penaltyActive: timeDelinquent > grace,
-    };
-    return { snapshot, heldWei: BigInt(ls.normalizedBalance) };
-  }
-
-  /** Verified per-market path: currentState() + immutables + balanceOf + ERC20 metadata. */
-  private async readDirect(
-    market: string,
-    lender: string,
-    tag: BlockTag
-  ): Promise<{ snapshot: MarketSnapshot; heldWei: bigint }> {
     const m = this.market(market);
-    const opt = { blockTag: tag };
-    const [state, borrower, asset, grace, heldWei] = await Promise.all([
-      m.currentState(opt),
-      m.borrower(opt),
-      m.asset(opt),
-      m.delinquencyGracePeriod(opt),
-      m.balanceOf(lender, opt) as Promise<bigint>,
-    ]);
-    const token = new Contract(asset, ERC20_ABI, this.provider);
-    const [symbol, decimals] = await Promise.all([token.symbol(opt), token.decimals(opt)]);
-
-    const timeDelinquent = BigInt(state.timeDelinquent);
-    const delinquencyGracePeriod = BigInt(grace);
-    const snapshot: MarketSnapshot = {
-      market,
-      borrower,
-      asset,
-      assetSymbol: symbol,
-      assetDecimals: Number(decimals),
-      isClosed: state.isClosed,
-      isDelinquent: state.isDelinquent,
-      timeDelinquent,
-      delinquencyGracePeriod,
-      penaltyActive: timeDelinquent > delinquencyGracePeriod,
-    };
-    return { snapshot, heldWei: BigInt(heldWei) };
+    return BigInt(await m.balanceOf(lender, { blockTag: tag }));
   }
 
   /**
@@ -206,9 +141,9 @@ export class Chain {
    * and subtracts what they've already withdrawn. Verify against protocol redemption math
    * for fully-paid expired batches before relying on it for legal figures.
    */
-  private async readWithdrawalsOwed(market: string, lender: string, tag: BlockTag): Promise<bigint> {
+  async readWithdrawalsOwed(market: string, lender: string): Promise<bigint> {
     const m = this.market(market);
-    const opt = { blockTag: tag };
+    const opt = { blockTag: this.blockTag() };
     const [state, unpaid] = await Promise.all([
       m.currentState(opt),
       m.getUnpaidBatchExpiries(opt) as Promise<bigint[]>,

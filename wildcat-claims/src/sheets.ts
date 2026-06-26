@@ -2,22 +2,21 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { AccountData } from './utils';
 
 const HEADER_ROW = [
-  'Incident',
+  'Market Name',
+  'Market Address',
+  'Borrower',
+  'Network',
+  'In Default?',
+  'Time Delinquent (s)',
+  'Grace Period (s)',
+  'Total Owed (wei)',
+  'Held (wei)',
+  'Withdrawals (wei)',
+  'Asset',
+  'As-of Block',
   'Country',
-  'State',
-  'City',
   'Will speak to LEO?',
   'Will litigate?',
-  'Network',
-  'Eligibility Timestamp',
-  'Snapshot Block',
-  'Total Owed (wei)',
-  '# Markets',
-  'Market Addresses',
-  'Borrowers',
-  'Per-Market Owed',
-  'Per-Market Held (wei)',
-  'Per-Market Withdrawals (wei)',
   'Name',
   'Email',
   'Other Contact Info',
@@ -25,26 +24,22 @@ const HEADER_ROW = [
   'Signature',
 ];
 
-const fmtTimestamp = (ts: number): string =>
-  ts > 0 ? new Date(ts * 1000).toISOString() : 'latest';
-
 const toRow = (a: AccountData): Array<string | number | boolean> => [
-  a.incidentId,
+  a.marketName,
+  a.market,
+  a.borrower,
+  a.network,
+  a.inDefault,
+  a.timeDelinquent,
+  a.delinquencyGracePeriod,
+  a.amountOwedWei,
+  a.heldOwedWei,
+  a.withdrawalsOwedWei + (a.withdrawalsError ? ' (read incomplete)' : ''),
+  a.assetSymbol,
+  a.asOfBlock,
   a.country,
-  a.state,
-  a.city,
   a.willingToSpeakToLEO,
   a.willingToLitigate,
-  a.network,
-  fmtTimestamp(a.eligibilityTimestamp),
-  a.blockNumber,
-  a.totalAmountOwedWei,
-  a.claims.length,
-  a.claims.map((c) => c.market).join('\n'),
-  a.claims.map((c) => c.borrower).join('\n'),
-  a.claims.map((c) => `${c.amountOwed} ${c.assetSymbol}`).join('\n'),
-  a.claims.map((c) => c.heldOwedWei).join('\n'),
-  a.claims.map((c) => c.withdrawalsOwedWei).join('\n'),
   a.name,
   a.email,
   a.other,
@@ -81,11 +76,14 @@ export class Sheets {
     }
   }
 
+  /** Upsert keyed by (Ethereum Address, Market Address) — one row per lender per market. */
   async addAccount(account: AccountData): Promise<void> {
     if (!this.sheet) throw new Error('Sheets not connected — call connect() first');
     const rows = await this.sheet.getRows();
     const existing = rows.find(
-      (r: any) => (r['Ethereum Address'] ?? '').toLowerCase() === account.address.toLowerCase()
+      (r: any) =>
+        (r['Ethereum Address'] ?? '').toLowerCase() === account.address.toLowerCase() &&
+        (r['Market Address'] ?? '').toLowerCase() === account.market.toLowerCase()
     );
     const values = toRow(account);
     if (existing) {

@@ -1,6 +1,6 @@
-import { Country, State, City } from 'country-state-city';
-import { verifyMessage, verifyTypedData, keccak256, toUtf8Bytes, getAddress, type TypedDataDomain } from 'ethers';
-import type { EligibleClaim } from './wildcat/eligibility';
+import { Country } from 'country-state-city';
+import { verifyMessage, verifyTypedData, getAddress, type TypedDataDomain } from 'ethers';
+import type { ClaimResult } from './wildcat/eligibility';
 
 // ========================================================================== //
 //                                   Types                                    //
@@ -10,21 +10,18 @@ export interface FormData {
   name: string;
   email: string;
   other: string;
+  /** ISO country code (country-level only; no state/city). */
   country: string;
-  state: string;
-  city: string;
   acceptTerms: boolean;
   willingToSpeakToLEO: boolean;
   willingToLitigate: boolean;
 }
 
-/** Context bound into the signature so a claim cannot be replayed elsewhere. */
+/** Context bound into the signature so a claim is tied to one market on one network. */
 export interface SignedClaimContext {
   network: string;
-  /** Eligibility threshold (unix seconds); 0 when reading at 'latest'. */
-  eligibilityTimestamp: number;
-  /** keccak256 over the sorted, lowercased eligible market addresses. */
-  marketsHash: string;
+  /** The market the lender is claiming against. */
+  market: string;
 }
 
 /** Full submission payload (form + signed claim context). */
@@ -33,20 +30,25 @@ export interface SubmitData {
   claim: SignedClaimContext;
 }
 
-/** Persisted claim record. */
+/** Persisted claim record: one lender, one market. */
 export type AccountData = FormData & {
   address: string;
   signature: string;
   network: string;
-  /** The incident this claim belongs to (per-market scoping namespace). */
-  incidentId: string;
-  /** Block the eligibility reads were pinned to (audit trail). */
-  blockNumber: number;
-  /** Eligibility threshold (unix seconds); 0 when reading at 'latest'. */
-  eligibilityTimestamp: number;
-  marketsHash: string;
-  totalAmountOwedWei: string;
-  claims: EligibleClaim[];
+  market: string;
+  marketName: string;
+  borrower: string;
+  assetSymbol: string;
+  assetDecimals: number;
+  amountOwedWei: string;
+  heldOwedWei: string;
+  withdrawalsOwedWei: string;
+  withdrawalsError: boolean;
+  inDefault: boolean;
+  isClosed: boolean;
+  timeDelinquent: number;
+  delinquencyGracePeriod: number;
+  asOfBlock: number;
 };
 
 // ========================================================================== //
@@ -60,15 +62,7 @@ export function validateEmail(email: string): boolean {
 const isBlank = (s: string): boolean => !s || s.replace(/\s/g, '').length < 1;
 
 function getLocationError(d: FormData): string | undefined {
-  const country = Country.getCountryByCode(d.country);
-  if (!country) return 'Invalid country';
-  const state = State.getStatesOfCountry(country.isoCode).find(
-    (s) => s.isoCode.toLowerCase() === d.state.toLowerCase()
-  );
-  if (!state || state.countryCode !== d.country) return 'Invalid state';
-  const cities = City.getCitiesOfState(d.country, d.state);
-  if (!cities.length && d.city === '') return undefined;
-  if (!cities.map((c) => c.name.toLowerCase()).includes(d.city.toLowerCase())) return 'Invalid city';
+  if (!Country.getCountryByCode(d.country)) return 'Invalid country';
   return undefined;
 }
 
@@ -114,11 +108,7 @@ export const EIP712_TYPES = {
     { name: 'email', type: 'string' },
     { name: 'other', type: 'string' },
   ],
-  Location: [
-    { name: 'country', type: 'string' },
-    { name: 'state', type: 'string' },
-    { name: 'city', type: 'string' },
-  ],
+  Location: [{ name: 'country', type: 'string' }],
   Options: [
     { name: 'acceptTerms', type: 'bool' },
     { name: 'willingToSpeakToLEO', type: 'bool' },
@@ -126,8 +116,7 @@ export const EIP712_TYPES = {
   ],
   Claim: [
     { name: 'network', type: 'string' },
-    { name: 'eligibilityTimestamp', type: 'uint256' },
-    { name: 'marketsHash', type: 'bytes32' },
+    { name: 'market', type: 'address' },
   ],
   Data: [
     { name: 'contactInfo', type: 'Contact' },
@@ -139,17 +128,13 @@ export const EIP712_TYPES = {
 
 const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
   contactInfo: { name: form.name, email: form.email || '', other: form.other || '' },
-  location: { country: form.country, state: form.state, city: form.city || '' },
+  location: { country: form.country },
   options: {
     acceptTerms: form.acceptTerms,
     willingToSpeakToLEO: form.willingToSpeakToLEO,
     willingToLitigate: form.willingToLitigate,
   },
-  claim: {
-    network: claim.network,
-    eligibilityTimestamp: claim.eligibilityTimestamp,
-    marketsHash: claim.marketsHash,
-  },
+  claim: { network: claim.network, market: getAddress(claim.market) },
 });
 
 export const toSignatureString = (form: FormData, claim: SignedClaimContext): string =>
@@ -158,21 +143,12 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `email: ${form.email || ''}`,
     `other: ${form.other || ''}`,
     `country: ${form.country}`,
-    `state: ${form.state}`,
-    `city: ${form.city || ''}`,
     `acceptTerms: ${form.acceptTerms}`,
     `willingToSpeakToLEO: ${form.willingToSpeakToLEO}`,
     `willingToLitigate: ${form.willingToLitigate}`,
     `network: ${claim.network}`,
-    `eligibilityTimestamp: ${claim.eligibilityTimestamp}`,
-    `marketsHash: ${claim.marketsHash}`,
+    `market: ${getAddress(claim.market)}`,
   ].join('\n');
-
-/** keccak256 over sorted, lowercased market addresses — order-independent commitment. */
-export function computeMarketsHash(markets: string[]): string {
-  const sorted = markets.map((m) => m.toLowerCase()).sort();
-  return keccak256(toUtf8Bytes(sorted.join(',')));
-}
 
 /** Recover the signer address from an EIP-712 or personal_sign signature. */
 export function verifySignature(
@@ -191,21 +167,26 @@ export function toAccount(
   form: FormData,
   claim: SignedClaimContext,
   signature: string,
-  claims: EligibleClaim[],
-  totalAmountOwedWei: string,
-  incidentId: string,
-  blockNumber: number
+  result: ClaimResult
 ): AccountData {
   return {
     ...form,
     address: getAddress(address),
     signature,
     network: claim.network,
-    incidentId,
-    blockNumber,
-    eligibilityTimestamp: claim.eligibilityTimestamp,
-    marketsHash: claim.marketsHash,
-    totalAmountOwedWei,
-    claims,
+    market: getAddress(claim.market),
+    marketName: result.name,
+    borrower: result.borrower,
+    assetSymbol: result.assetSymbol,
+    assetDecimals: result.assetDecimals,
+    amountOwedWei: result.amountOwedWei,
+    heldOwedWei: result.heldOwedWei,
+    withdrawalsOwedWei: result.withdrawalsOwedWei,
+    withdrawalsError: result.withdrawalsError,
+    inDefault: result.inDefault,
+    isClosed: result.isClosed,
+    timeDelinquent: result.timeDelinquent,
+    delinquencyGracePeriod: result.delinquencyGracePeriod,
+    asOfBlock: result.asOfBlock,
   };
 }

@@ -1,57 +1,68 @@
 # wildcat-claims
 
-Lender claim-intake service for distressed Wildcat V2 markets. A fork of `juris.ndx.fi`,
+Lender claim-intake service for defaulted Wildcat V2 markets. A fork of `juris.ndx.fi`,
 retargeted from the Indexed Finance exploit to live Wildcat protocol state.
 
-A lender connects a wallet; the service checks on-chain whether the address is a lender in
-any **delinquent or penalty-active** Wildcat market and how much it is owed. If eligible, the
-lender signs a claim form (contact, location, consent to litigate / speak to law enforcement)
-which is persisted to LevelDB and mirrored to a Google Sheet.
+A claim is one **lender** against one **market**. The lender finds the affected market via
+its **borrower** (the borrower's markets are enumerated on-chain), connects the wallet they
+lent with, and — if the market is in default and they still hold a position — signs a claim
+form (contact, country, consent to litigate / speak to law enforcement) which is persisted to
+LevelDB and mirrored to a Google Sheet.
 
-See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the full design and `../WILDCAT_PROTOCOL_ARCHITECTURE.md`
-for the on-chain surface this reads.
+See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
+`../WILDCAT_PROTOCOL_ARCHITECTURE.md` for the on-chain surface this reads.
 
 ## How it works
 
-- **Discovery** — `WildcatArchController.getRegisteredMarkets()` enumerates every market.
-- **Distress filter** — each market's live `currentState()` gives `isDelinquent` and
-  `timeDelinquent`; a market is distressed if `isDelinquent || timeDelinquent > delinquencyGracePeriod`.
-  The distressed subset is cached (TTL configurable) so per-lender lookups stay cheap.
-- **Eligibility** — for each distressed market, `market.balanceOf(lender)` is the lender's
-  claim (underlying owed, incl. accrued interest). Eligible if non-dust.
-- **Attribution** — `market.borrower()` ties each market to its borrower.
-- **Claim** — EIP-712 / personal_sign signature commits to the eligible market set
-  (`marketsHash`) + network, so it can't be replayed. The server re-checks eligibility and
-  the hash before persisting.
+- **Discovery** — `WildcatArchController.getRegisteredMarkets()` enumerates every market;
+  the borrower's markets are those whose immutable `market.borrower()` matches. Each market
+  carries a `name`, shown for selection.
+- **Default gate** — a market is "in default" when, read live, its grace tracker has run a
+  buffer past the grace period: `timeDelinquent >= delinquencyGracePeriod + DEFAULT_BUFFER_DAYS`
+  (default 90 days).
+- **Eligibility** — for the selected market, the lender's owed amount is `market.balanceOf`
+  (via `MarketLens` when available) plus, when enabled, their share of queued/expired
+  withdrawal batches. Eligible = market in default **and** owed is non-dust.
+- **Claim** — an EIP-712 / personal_sign signature commits to `{ network, market }`, so it
+  can't be replayed to another market or chain. The server re-checks default + position live
+  before persisting.
+
+## Endpoints
+
+- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain.
+- `POST /markets` — `{ borrower }` → that borrower's markets with names + live `inDefault`.
+- `POST /eligibility` — `{ account, market }` → owed amount, default status, and the claim context to sign.
+- `POST /submit` — `{ data: { form, claim }, signature }` → re-verifies and persists.
 
 ## Layout
 
 ```
 src/
-  index.ts              Express server: /eligibility, /submit, /health
+  index.ts              Express server: /config, /markets, /eligibility, /submit, /health
   wildcat/
-    config.ts           network + address config (mainnet defaults baked in)
-    abis.ts             human-readable ABI fragments (ArchController, market, ERC20)
-    chain.ts            provider, market enumeration, state/balance reads
-    eligibility.ts      distressed-market cache + eligibleClaims()
-  utils.ts              form validation + signature verification + marketsHash
-  database.ts           per-network claim store
-  simple-level.ts       JSON kv over LevelDB / memdown
-  sheets.ts             Google Sheets mirror
-  httpRedirect.ts       port-80 -> HTTPS redirect (prod)
+    config.ts           network + addresses + DEFAULT_BUFFER_DAYS + optional BORROWER_ADDRESS
+    abis.ts             ABI fragments (ArchController, market, ERC20, MarketLens)
+    chain.ts            market enumeration, borrower filter, live state, lender reads
+    eligibility.ts      default gate + getBorrowerMarkets() + eligibleClaim()
+  utils.ts              form validation (country-level) + signature + EIP-712 types
+  database.ts           per-(network, market) claim store
+  sheets.ts             Google Sheets mirror (one row per lender per market)
+app-build/
+  index.html            self-contained frontend (ethers + country-state-city via CDN)
 test/
-  eligibility.test.ts   unit tests (mocked chain)
+  eligibility.test.ts   default gate, owed math, borrower discovery (mocked chain)
+  signature.test.ts     EIP-712 + personal_sign round-trips, market/chain binding
 ```
 
 ## Setup
 
 ```bash
 npm install
-cp .env.example .env      # set RPC_URL (Alchemy/Infura/your node)
+cp .env.example .env      # set RPC_URL; optionally BORROWER_ADDRESS, DEFAULT_BUFFER_DAYS
 # optional: add .google.json { client_email, private_key, sheet_id } for sheet mirroring
 npm run typecheck
 npm test
-npm run dev               # ts-node, http on :3001
+npm run dev               # ts-node, http on :3001 (serves app-build/)
 ```
 
 Build & run:
@@ -69,11 +80,16 @@ npm run build && npm start
 | WildcatHooksFactory | `0xdd7dd3b5076cf89440d05585ff56d246386207be` |
 | WildcatSanctionsSentinel | `0x437e0551892C2C9b06d3fFd248fe60572e08CD1A` |
 
-## Open items (carried from the spec)
+## Open items
 
-- Whether queued/expired withdrawals and closed-but-unpaid markets count toward a claim.
-- Whether sanctioned/escrowed lenders must be able to register (needs sentinel/escrow resolution).
-- Live reads (default) vs. a pinned incident block (`SNAPSHOT_BLOCK`, archive node).
-- Frontend: not included here (the original Juris repo only shipped a pre-built bundle).
-- For batched reads at scale, swap the per-market calls in `chain.ts` for
-  `MarketLens.getMarketDataWithLenderStatus` (copy the full ABI from the protocol `out/`).
+- **MarketLens ABI** in `abis.ts` is reconstructed, not taken from the deployed artifact.
+  Until the real `.abi` for `getMarketDataWithLenderStatus` is pasted in, the lens read
+  falls back to `balanceOf` (logged once). Set `LENS_MODE=direct` to force the verified path.
+- **Withdrawal math** is best-effort (normalizes remaining scaled amount at the live
+  scaleFactor); verify against protocol redemption math before relying on the figures.
+- **Default definition** is the interim `grace + 90 days` rule, read live — no historical
+  pinning. Adjust via `DEFAULT_BUFFER_DAYS`.
+- **Sanctioned/escrowed lenders** are not resolved: a position moved to a sanctions escrow
+  won't show as a balance and won't be counted.
+- Sanctioned lenders aside, no rate-limiting / abuse protection on the public endpoints yet,
+  and the CDN frontend deps should be self-hosted for production.
