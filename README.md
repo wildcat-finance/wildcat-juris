@@ -1,6 +1,6 @@
-# wildcat-claims
+# Wildcat Juris
 
-Lender claim-intake service for defaulted Wildcat V2 markets. A fork of `juris.ndx.fi`,
+Lender claim-intake tool for defaulted **Wildcat V2** markets. A fork of `juris.ndx.fi`,
 retargeted from the Indexed Finance exploit to live Wildcat protocol state.
 
 A claim is one **lender** against one **market**. The lender finds the affected market via
@@ -14,8 +14,29 @@ The lender submits this proof to the **Wildcat Foundation** as evidence that the
 impacted lender, in order to receive the (non-public) borrower information needed to pursue a
 **civil breach-of-contract claim**.
 
-See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
-`../WILDCAT_PROTOCOL_ARCHITECTURE.md` for the on-chain surface this reads.
+## Repo layout
+
+```
+.
+  README.md                         this file
+  JURIS_WILDCAT_ADAPTATION_SPEC.md  the adaptation spec (Juris → Wildcat)
+  WILDCAT_PROTOCOL_ARCHITECTURE.md  the on-chain surface this reads
+  EXPLAINER.md                      the original Juris design
+  wildcat-claims/                   the service — Express API + static frontend
+    src/
+      index.ts                      Express server: /config, /markets, /eligibility, /submit, /health
+      wildcat/
+        config.ts                   network + addresses + DEFAULT_BUFFER_DAYS + optional BORROWER_ADDRESS
+        abis.ts                     ABI fragments (ArchController, V2 market, ERC20, MarketLensV2)
+        chain.ts                    market enumeration, borrower filter, live state, lender reads
+        eligibility.ts              default gate + getBorrowerMarkets() + eligibleClaim()
+      utils.ts                      form validation (country-level) + signature + EIP-712 types
+    app-build/index.html            self-contained frontend (ethers + country-state-city via CDN)
+    test/                           eligibility (default gate, owed math, discovery) + signature round-trips
+```
+
+The application lives entirely under `wildcat-claims/`; the Markdown files at the root are
+design docs.
 
 ## How it works
 
@@ -30,42 +51,25 @@ See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
   direct mode) plus, when enabled, their share of queued/expired withdrawal batches
   (`MarketLensV2` `normalizedAmountOwed`). Eligible = market in default **and** owed non-dust.
   All markets are assumed to be Wildcat V2.
-- **Claim** — an EIP-712 / personal_sign signature commits to `{ network, market }`, so it
-  can't be replayed to another market or chain. The server re-checks default + position live
-  before persisting.
+- **Proof** — an EIP-712 / personal_sign signature commits to
+  `{ network, market, penalizedDays, amountOwedWei, asOfBlock }`: it binds the market, how
+  much is owed, and the block the figures were read at, so anyone can replay that block on an
+  archive node to confirm the data is real, and the signature can't be reused elsewhere. The
+  server re-checks eligibility live, then returns a copyable proof (nothing is stored).
 
 ## Endpoints
 
-- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain.
+- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain, debug flag.
 - `POST /markets` — `{ borrower }` → that borrower's markets with names + live `inDefault`.
 - `POST /eligibility` — `{ account, market }` → owed amount, default status, and the claim context to sign.
-- `POST /submit` — `{ data: { form, claim }, signature }` → re-verifies and persists.
-
-## Layout
-
-```
-src/
-  index.ts              Express server: /config, /markets, /eligibility, /submit, /health
-  wildcat/
-    config.ts           network + addresses + DEFAULT_BUFFER_DAYS + optional BORROWER_ADDRESS
-    abis.ts             ABI fragments (ArchController, market, ERC20, MarketLens)
-    chain.ts            market enumeration, borrower filter, live state, lender reads
-    eligibility.ts      default gate + getBorrowerMarkets() + eligibleClaim()
-  utils.ts              form validation (country-level) + signature + EIP-712 types
-  (no persistence yet — /submit verifies and returns a copyable proof; export/email is future work)
-app-build/
-  index.html            self-contained frontend (ethers + country-state-city via CDN)
-test/
-  eligibility.test.ts   default gate, owed math, borrower discovery (mocked chain)
-  signature.test.ts     EIP-712 + personal_sign round-trips, market/chain binding
-```
+- `POST /submit` — `{ data: { form, claim }, signature }` → re-verifies the signature + eligibility and returns a copyable proof.
 
 ## Setup
 
 ```bash
+cd wildcat-claims
 npm install
-cp .env.example .env      # set RPC_URL; optionally BORROWER_ADDRESS, DEFAULT_BUFFER_DAYS
-# (no external sink: a successful submit returns a copyable signed-claim proof)
+cp .env.example .env      # set RPC_URL; optionally BORROWER_ADDRESS, DEFAULT_BUFFER_DAYS, DEBUG_MODE
 npm run typecheck
 npm test
 npm run dev               # ts-node, http on :3001 (serves app-build/)
@@ -77,7 +81,10 @@ Build & run:
 npm run build && npm start
 ```
 
-## Mainnet addresses (baked into `src/wildcat/config.ts`)
+No build step is needed to demo the UI without an RPC: `node scripts/demo-server.js` runs the
+real eligibility + signature code against a mock chain.
+
+## Mainnet addresses (baked into `wildcat-claims/src/wildcat/config.ts`)
 
 | Contract | Address |
 |---|---|
@@ -86,18 +93,23 @@ npm run build && npm start
 | WildcatHooksFactory | `0xdd7dd3b5076cf89440d05585ff56d246386207be` |
 | WildcatSanctionsSentinel | `0x437e0551892C2C9b06d3fFd248fe60572e08CD1A` |
 
-## Open items
+## Notes & open items
 
 - **ABIs are verified against the deployed contracts.** Every fragment this service calls
   (WildcatArchController, the V2 market, and MarketLensV2) was cross-checked by selector +
   type against the on-chain ABIs. Note the deployed V2 `currentState()` has 13 fields
   (no `protocolFeeBips`) — the SDK typechain's `MarketStateV2Struct` is wrong; the on-chain
   shape is used here. What remains unconfirmed is live *data* behaviour, not the ABIs.
+- **`DEBUG_MODE`** (testing only) assumes any lender holds ≥100 of the underlying and relaxes
+  the in-default gate, so the signing flow can be exercised without a real position.
+  Signatures are still verified. **Never enable it in production** — the proof will (honestly)
+  report that the held amount was assumed.
 - **V2 only** — assumes V2 markets (per Wildcat). V1 markets would need the V1 lens and
   market wrappers.
 - **Default definition** is the interim `grace + 90 days` rule, read live — no historical
   pinning. Adjust via `DEFAULT_BUFFER_DAYS`.
 - **Sanctioned/escrowed lenders** are not resolved: a position moved to a sanctions escrow
   won't show as a balance and won't be counted.
-- Sanctioned lenders aside, no rate-limiting / abuse protection on the public endpoints yet,
-  and the CDN frontend deps should be self-hosted for production.
+- No rate-limiting / abuse protection on the public endpoints yet, and the CDN frontend deps
+  should be self-hosted for production.
+```
