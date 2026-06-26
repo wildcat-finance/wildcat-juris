@@ -60,11 +60,20 @@ export class Eligibility {
     };
   }
 
-  /** Every market deployed by `borrower`, with live default status, for UI selection. */
+  /**
+   * Every market deployed by `borrower`, with live default status, for UI selection.
+   * The ArchController has no borrower index, so we pull the full registry and filter
+   * each market by its immutable borrower(), then load full info only for the matches.
+   */
   async getBorrowerMarkets(borrower: string): Promise<MarketSummary[]> {
-    const infos = await this.chain.getMarketsForBorrower(borrower);
+    const all = await this.chain.getAllMarkets();
+    const target = borrower.toLowerCase();
+    const borrowers = await Promise.all(all.map((m) => this.chain.readBorrower(m)));
+    const matches = all.filter((_, i) => borrowers[i].toLowerCase() === target);
     const summaries = await Promise.all(
-      infos.map(async (info) => this.summary(info, await this.chain.getMarketState(info.market)))
+      matches.map(async (m) =>
+        this.summary(await this.chain.getMarketInfo(m), await this.chain.getMarketState(m))
+      )
     );
     // Defaulted markets first, then by name.
     return summaries.sort(

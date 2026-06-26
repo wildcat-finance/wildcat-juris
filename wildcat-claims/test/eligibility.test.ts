@@ -48,10 +48,10 @@ interface FakeOpts {
 function fakeChain(o: FakeOpts): Chain {
   return {
     resolveAsOfBlock: async () => o.block ?? 999,
+    getAllMarkets: async () => Object.keys(o.infos ?? {}),
+    readBorrower: async (m: string) => o.infos![m].borrower,
     getMarketInfo: async (m: string) => o.infos![m],
     getMarketState: async (m: string) => o.states![m],
-    getMarketsForBorrower: async (b: string) =>
-      Object.values(o.infos ?? {}).filter((i) => i.borrower.toLowerCase() === b.toLowerCase()),
     readLenderHeld: async (m: string) => o.held?.[m] ?? 0n,
     readWithdrawalsOwed: async (m: string) => o.withdrawals?.[m] ?? 0n,
   } as unknown as Chain;
@@ -120,20 +120,21 @@ describe('eligibleClaim (live default gate)', () => {
 });
 
 describe('getBorrowerMarkets', () => {
-  it('returns only the borrower’s markets, flags default status, defaulted first', async () => {
+  it('filters the registry by borrower() (case-insensitive), flags default, defaulted first', async () => {
     const infos = {
-      '0xHEALTHY': info('0xHEALTHY', { name: 'Zebra', borrower: '0xB' }),
-      '0xDEFAULT': info('0xDEFAULT', { name: 'Alpha', borrower: '0xB' }),
-      '0xOTHER': info('0xOTHER', { borrower: '0xSOMEONE_ELSE' }),
+      '0xHEALTHY': info('0xHEALTHY', { name: 'Zebra', borrower: '0xBob' }),
+      '0xDEFAULT': info('0xDEFAULT', { name: 'Alpha', borrower: '0xBob' }),
+      '0xOTHER': info('0xOTHER', { borrower: '0xSomeoneElse' }),
     };
     const states = {
       '0xHEALTHY': state({ timeDelinquent: 0n, isDelinquent: false }),
       '0xDEFAULT': state({ timeDelinquent: DEFAULTED }),
+      // no state for 0xOTHER — it must be filtered out before any state read
     };
     const chain = fakeChain({ infos, states });
-    const out = await new Eligibility(chain, baseCfg).getBorrowerMarkets('0xB');
+    const out = await new Eligibility(chain, baseCfg).getBorrowerMarkets('0xBOB'); // different case
 
-    expect(out.map((m) => m.market)).toEqual(['0xDEFAULT', '0xHEALTHY']); // defaulted first
+    expect(out.map((m) => m.market)).toEqual(['0xDEFAULT', '0xHEALTHY']); // defaulted first, 0xOTHER excluded
     expect(out.find((m) => m.market === '0xDEFAULT')!.inDefault).toBe(true);
     expect(out.find((m) => m.market === '0xHEALTHY')!.inDefault).toBe(false);
   });

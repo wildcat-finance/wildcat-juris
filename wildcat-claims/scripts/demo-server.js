@@ -59,7 +59,7 @@ const mockChain = {
     const m = MARKETS[market];
     return { isClosed: false, isDelinquent: m.isDelinquent, timeDelinquent: m.timeDelinquent, delinquencyGracePeriod: m.grace };
   },
-  async getMarketsForBorrower() { return Promise.all(Object.keys(MARKETS).map((m) => this.getMarketInfo(m))); },
+  async readBorrower() { return DEMO_BORROWER; }, // every demo market belongs to DEMO_BORROWER
   async readLenderHeld(market) { return MARKETS[market].owed; }, // any connected wallet sees a position
   async readWithdrawalsOwed() { return 0n; },
   async resolveAsOfBlock() { return 20_500_000; },

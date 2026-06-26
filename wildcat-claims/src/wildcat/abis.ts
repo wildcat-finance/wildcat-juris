@@ -14,6 +14,9 @@
 
 export const ARCH_CONTROLLER_ABI = [
   'function getRegisteredMarketsCount() view returns (uint256)',
+  // No-arg overload returns the full set in one call (selector 0x46762101); the
+  // paginated overload is kept as a fallback for very large registries.
+  'function getRegisteredMarkets() view returns (address[])',
   'function getRegisteredMarkets(uint256 start, uint256 end) view returns (address[])',
   'function isRegisteredMarket(address market) view returns (bool)',
   'function getRegisteredBorrowersCount() view returns (uint256)',
@@ -23,9 +26,10 @@ export const ARCH_CONTROLLER_ABI = [
 ];
 
 /**
- * WildcatMarketV2. `currentState()` returns the live MarketStateV2 (interest/fees/
- * delinquency replayed to block.timestamp, no storage write). Field order matches
- * the SDK's WildcatMarketV2 typechain MarketStateV2Struct exactly.
+ * WildcatMarketV2. `currentState()` returns the live MarketState (interest/fees/
+ * delinquency replayed to block.timestamp, no storage write). Field order/types match
+ * the DEPLOYED market ABI exactly (13 fields — note there is NO protocolFeeBips here,
+ * despite the SDK typechain's MarketStateV2Struct; the on-chain ABI is authoritative).
  */
 export const MARKET_ABI = [
   'function currentState() view returns (tuple(' +
@@ -38,7 +42,6 @@ export const MARKET_ABI = [
     'uint32 pendingWithdrawalExpiry,' +
     'bool isDelinquent,' +
     'uint32 timeDelinquent,' +
-    'uint16 protocolFeeBips,' +
     'uint16 annualInterestBips,' +
     'uint16 reserveRatioBips,' +
     'uint112 scaleFactor,' +

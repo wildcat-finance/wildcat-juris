@@ -50,18 +50,33 @@ export class Chain {
     return this.cfg.snapshotBlock ?? this.provider.getBlockNumber();
   }
 
-  /** Enumerate every market registered on the arch-controller (paginated). */
+  /**
+   * Every market registered on the arch-controller. Uses the no-arg
+   * getRegisteredMarkets() (one call, selector 0x46762101); falls back to the
+   * paginated overload only if that reverts (e.g. a future registry too large).
+   */
   async getAllMarkets(): Promise<string[]> {
     const tag = this.blockTag();
-    const count: bigint = await this.arch.getRegisteredMarketsCount({ blockTag: tag });
-    const markets: string[] = [];
-    for (let i = 0n; i < count; i += MARKETS_PAGE) {
-      const page: string[] = await this.arch.getRegisteredMarkets(i, i + MARKETS_PAGE, {
-        blockTag: tag,
-      });
-      markets.push(...page);
+    try {
+      return await this.arch['getRegisteredMarkets()']({ blockTag: tag });
+    } catch {
+      const count: bigint = await this.arch.getRegisteredMarketsCount({ blockTag: tag });
+      const markets: string[] = [];
+      for (let i = 0n; i < count; i += MARKETS_PAGE) {
+        const page: string[] = await this.arch['getRegisteredMarkets(uint256,uint256)'](
+          i,
+          i + MARKETS_PAGE,
+          { blockTag: tag }
+        );
+        markets.push(...page);
+      }
+      return markets;
     }
-    return markets;
+  }
+
+  /** A market's immutable borrower (one call) — used to filter the registry. */
+  async readBorrower(market: string): Promise<string> {
+    return this.market(market).borrower({ blockTag: this.blockTag() });
   }
 
   /** Immutable market identity (borrower, name, asset, token metadata). Cached. */
@@ -99,14 +114,6 @@ export class Chain {
       timeDelinquent: BigInt(state.timeDelinquent),
       delinquencyGracePeriod: BigInt(grace),
     };
-  }
-
-  /** Markets whose immutable borrower matches `borrower`. */
-  async getMarketsForBorrower(borrower: string): Promise<MarketInfo[]> {
-    const all = await this.getAllMarkets();
-    const target = borrower.toLowerCase();
-    const infos = await Promise.all(all.map((m) => this.getMarketInfo(m)));
-    return infos.filter((i) => i.borrower.toLowerCase() === target);
   }
 
   /**
