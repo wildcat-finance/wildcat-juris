@@ -84,12 +84,13 @@ npm run build && npm start
 
 ## Open items
 
-- **ABIs** are sourced from the Wildcat TypeScript SDK (MarketLensV2 + WildcatMarketV2),
-  so they are authoritative rather than reconstructed. They have only been validated by
-  ethers encode/decode round-trips, not yet against the live node — a first real
-  `/markets` + `/eligibility` call confirms them end-to-end.
-- **V2 only** — `currentState()` decoding and the lens reads assume V2 markets. V1 markets
-  would need the 13-field `MarketState` shape and the V1 lens.
+- **ABIs are verified against the deployed contracts.** Every fragment this service calls
+  (WildcatArchController, the V2 market, and MarketLensV2) was cross-checked by selector +
+  type against the on-chain ABIs. Note the deployed V2 `currentState()` has 13 fields
+  (no `protocolFeeBips`) — the SDK typechain's `MarketStateV2Struct` is wrong; the on-chain
+  shape is used here. What remains unconfirmed is live *data* behaviour, not the ABIs.
+- **V2 only** — assumes V2 markets (per Wildcat). V1 markets would need the V1 lens and
+  market wrappers.
 - **Default definition** is the interim `grace + 90 days` rule, read live — no historical
   pinning. Adjust via `DEFAULT_BUFFER_DAYS`.
 - **Sanctioned/escrowed lenders** are not resolved: a position moved to a sanctions escrow
