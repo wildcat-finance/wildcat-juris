@@ -1,0 +1,13 @@
+# dependencies / build output
+node_modules/
+dist/
+
+# secrets & local data
+.env
+.google.json
+.db/
+src/.db/
+*.log
+
+# vendored upstream reference archive (re-downloadable, 3.7MB)
+juris.ndx.fi-master.zip

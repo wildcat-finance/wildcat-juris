@@ -1,0 +1,7 @@
+.env
+.google.json
+node_modules/
+dist/
+src/.db/
+.db/
+*.log

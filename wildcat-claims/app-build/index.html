@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wildcat Lender Claim Intake</title>
+    <style>
+      :root {
+        --bg: #0e0f13;
+        --panel: #171a21;
+        --panel-2: #1f2330;
+        --border: #2a2f3d;
+        --text: #e7e9ee;
+        --muted: #9aa3b2;
+        --accent: #f0b429;
+        --accent-2: #ffd166;
+        --ok: #3fbf7f;
+        --err: #ff6b6b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      .wrap { max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; }
+      header h1 { font-size: 22px; margin: 0 0 4px; }
+      header p { color: var(--muted); margin: 0 0 20px; }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
+      .meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+      .meta dt { color: var(--muted); }
+      .meta dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-all; }
+      button {
+        background: var(--accent); color: #1a1205; border: 0; border-radius: 8px;
+        padding: 11px 18px; font-weight: 600; font-size: 14px; cursor: pointer;
+      }
+      button:hover { background: var(--accent-2); }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+      input[type="text"], input[type="email"], select {
+        width: 100%; background: var(--panel-2); color: var(--text);
+        border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 14px;
+      }
+      .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      .check { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0; }
+      .check input { margin-top: 3px; }
+      .check span { font-size: 13px; color: var(--text); }
+      .claims { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .claims th, .claims td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+      .claims th { color: var(--muted); font-weight: 500; }
+      .claims td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .total { margin-top: 12px; font-size: 16px; }
+      .total b { color: var(--accent-2); }
+      .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
+      .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+      .status { padding: 12px 14px; border-radius: 8px; margin-top: 8px; font-size: 14px; }
+      .status.ok { background: rgba(63,191,127,0.12); color: var(--ok); border: 1px solid rgba(63,191,127,0.4); }
+      .status.err { background: rgba(255,107,107,0.1); color: var(--err); border: 1px solid rgba(255,107,107,0.4); }
+      .hidden { display: none; }
+      a { color: var(--accent-2); }
+      code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Wildcat Lender Claim Intake</h1>
+        <p>Connect the wallet that lent into an affected market to register a claim.</p>
+      </header>
+
+      <div class="card" id="contextCard">
+        <h2>Incident</h2>
+        <dl class="meta" id="contextMeta"><dd>Loading…</dd></dl>
+      </div>
+
+      <div class="card">
+        <h2>1 · Wallet</h2>
+        <button id="connectBtn">Connect wallet</button>
+        <div id="walletInfo" class="hint hidden"></div>
+        <div id="connectStatus"></div>
+      </div>
+
+      <div class="card hidden" id="eligCard">
+        <h2>2 · Eligibility</h2>
+        <div id="eligBody"></div>
+      </div>
+
+      <div class="card hidden" id="formCard">
+        <h2>3 · Your details</h2>
+        <label>Full name *</label>
+        <input type="text" id="name" autocomplete="name" />
+        <label>Email</label>
+        <input type="email" id="email" autocomplete="email" />
+        <label>Other contact (Telegram, Signal, …)</label>
+        <input type="text" id="other" />
+        <div class="hint">Provide an email or another contact method.</div>
+
+        <div class="row">
+          <div><label>Country *</label><select id="country"></select></div>
+          <div><label>State / Region</label><select id="state"></select></div>
+          <div><label>City</label><select id="city"></select></div>
+        </div>
+
+        <label class="check"><input type="checkbox" id="willingToLitigate" /><span>I am willing to participate in litigation to recover funds.</span></label>
+        <label class="check"><input type="checkbox" id="willingToSpeakToLEO" /><span>I am willing to speak with law enforcement.</span></label>
+        <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and consent to this information being shared with the legal/coordination team. *</span></label>
+
+        <button id="submitBtn">Sign &amp; submit claim</button>
+        <div id="submitStatus"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { BrowserProvider, getAddress, formatUnits } from "https://cdn.jsdelivr.net/npm/ethers@6.13.2/+esm";
+      import { Country, State, City } from "https://cdn.jsdelivr.net/npm/country-state-city@3.2.1/+esm";
+
+      const $ = (id) => document.getElementById(id);
+      const show = (el) => el.classList.remove("hidden");
+      const hide = (el) => el.classList.add("hidden");
+      const setStatus = (el, msg, kind) => { el.className = "status " + (kind || ""); el.textContent = msg; };
+
+      let cfg = null;        // /config response
+      let account = null;    // connected address
+      let elig = null;       // /eligibility response (incl. canonical claim context)
+
+      // ---- Load incident config ------------------------------------------------
+      async function loadConfig() {
+        try {
+          cfg = await (await fetch("/config")).json();
+          const ts = Number(cfg.eligibilityTimestamp) > 0
+            ? new Date(cfg.eligibilityTimestamp * 1000).toISOString().replace(".000Z", "Z")
+            : "latest (live)";
+          $("contextMeta").innerHTML = `
+            <dt>Incident</dt><dd>${cfg.incidentId}</dd>
+            <dt>Network</dt><dd>${cfg.network} <span class="pill">chainId ${cfg.chainId}</span></dd>
+            <dt>Eligibility as of</dt><dd>${ts}</dd>
+            <dt>Markets in scope</dt><dd>${cfg.scopedMarkets.length}</dd>`;
+        } catch (e) {
+          $("contextMeta").innerHTML = `<dd class="status err">Could not load incident config: ${e.message}</dd>`;
+        }
+      }
+
+      // ---- Wallet --------------------------------------------------------------
+      $("connectBtn").addEventListener("click", async () => {
+        if (!window.ethereum) {
+          setStatus($("connectStatus"), "No Ethereum wallet detected. Install MetaMask or similar.", "err");
+          return;
+        }
+        try {
+          const provider = new BrowserProvider(window.ethereum);
+          const accounts = await provider.send("eth_requestAccounts", []);
+          account = getAddress(accounts[0]);
+          $("walletInfo").textContent = "Connected: " + account;
+          show($("walletInfo"));
+          setStatus($("connectStatus"), "", "");
+          await checkEligibility();
+        } catch (e) {
+          setStatus($("connectStatus"), "Connection failed: " + (e.shortMessage || e.message), "err");
+        }
+      });
+
+      // ---- Eligibility ---------------------------------------------------------
+      async function checkEligibility() {
+        show($("eligCard"));
+        $("eligBody").innerHTML = `<div class="hint">Checking on-chain eligibility…</div>`;
+        try {
+          const res = await fetch("/eligibility", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ account }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          elig = await res.json();
+          renderEligibility();
+        } catch (e) {
+          $("eligBody").innerHTML = `<div class="status err">Eligibility check failed: ${e.message}</div>`;
+          hide($("formCard"));
+        }
+      }
+
+      function renderEligibility() {
+        if (!elig.claims.length) {
+          $("eligBody").innerHTML = `<div class="status err">This address holds no eligible position in the in-scope markets at the eligibility threshold.</div>`;
+          hide($("formCard"));
+          return;
+        }
+        const rows = elig.claims.map((c) => {
+          const wd = Number(c.withdrawalsOwedWei) > 0
+            ? ` <span class="pill">incl. withdrawals</span>` : "";
+          const flags = [c.isClosed ? "closed" : "", c.isDelinquent ? "delinquent" : "", c.penaltyActive ? "penalty" : ""].filter(Boolean).join(", ");
+          return `<tr>
+            <td>${c.market.slice(0, 10)}…${flags ? ` <span class="pill">${flags}</span>` : ""}${c.withdrawalsError ? ` <span class="pill" style="color:var(--err)">withdrawal read incomplete</span>` : ""}</td>
+            <td class="num">${Number(c.amountOwed).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${c.assetSymbol}${wd}</td>
+          </tr>`;
+        }).join("");
+        const totalSym = elig.claims[0].assetSymbol;
+        const total = formatUnits(elig.totalOwedWei, elig.claims[0].assetDecimals);
+        $("eligBody").innerHTML = `
+          <table class="claims">
+            <thead><tr><th>Market</th><th class="num">Amount owed</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="total">Total: <b>${Number(total).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${totalSym}</b> across ${elig.claims.length} market(s)</div>
+          <div class="hint">Figures read at block ${elig.blockNumber}. The amount is re-verified on-chain when you submit.</div>`;
+        show($("formCard"));
+      }
+
+      // ---- Location selectors --------------------------------------------------
+      function initLocation() {
+        const cSel = $("country"), sSel = $("state"), citySel = $("city");
+        cSel.innerHTML = `<option value="">Select…</option>` +
+          Country.getAllCountries().map((c) => `<option value="${c.isoCode}">${c.name}</option>`).join("");
+        cSel.addEventListener("change", () => {
+          const states = State.getStatesOfCountry(cSel.value);
+          sSel.innerHTML = `<option value="">Select…</option>` +
+            states.map((s) => `<option value="${s.isoCode}">${s.name}</option>`).join("");
+          citySel.innerHTML = `<option value="">—</option>`;
+        });
+        sSel.addEventListener("change", () => {
+          const cities = City.getCitiesOfState(cSel.value, sSel.value);
+          citySel.innerHTML = cities.length
+            ? `<option value="">Select…</option>` + cities.map((c) => `<option value="${c.name}">${c.name}</option>`).join("")
+            : `<option value="">— (none listed)</option>`;
+        });
+      }
+
+      // ---- Submit --------------------------------------------------------------
+      $("submitBtn").addEventListener("click", async () => {
+        const form = {
+          name: $("name").value.trim(),
+          email: $("email").value.trim(),
+          other: $("other").value.trim(),
+          country: $("country").value,
+          state: $("state").value,
+          city: $("city").value,
+          acceptTerms: $("acceptTerms").checked,
+          willingToSpeakToLEO: $("willingToSpeakToLEO").checked,
+          willingToLitigate: $("willingToLitigate").checked,
+        };
+        if (!form.name) return setStatus($("submitStatus"), "Please enter your name.", "err");
+        if (!form.email && !form.other) return setStatus($("submitStatus"), "Provide an email or other contact.", "err");
+        if (!form.country) return setStatus($("submitStatus"), "Please select a country.", "err");
+        if (!form.acceptTerms) return setStatus($("submitStatus"), "You must confirm the consent checkbox.", "err");
+        if (!form.willingToLitigate && !form.willingToSpeakToLEO) return setStatus($("submitStatus"), "Select at least one consent option.", "err");
+
+        const btn = $("submitBtn");
+        btn.disabled = true;
+        try {
+          setStatus($("submitStatus"), "Requesting signature…", "");
+          const provider = new BrowserProvider(window.ethereum);
+          const signer = await provider.getSigner();
+
+          // EIP-712 typed data — must match the server's types exactly.
+          const types = {
+            Contact: [
+              { name: "name", type: "string" },
+              { name: "email", type: "string" },
+              { name: "other", type: "string" },
+            ],
+            Location: [
+              { name: "country", type: "string" },
+              { name: "state", type: "string" },
+              { name: "city", type: "string" },
+            ],
+            Options: [
+              { name: "acceptTerms", type: "bool" },
+              { name: "willingToSpeakToLEO", type: "bool" },
+              { name: "willingToLitigate", type: "bool" },
+            ],
+            Claim: [
+              { name: "network", type: "string" },
+              { name: "eligibilityTimestamp", type: "uint256" },
+              { name: "marketsHash", type: "bytes32" },
+            ],
+            Data: [
+              { name: "contactInfo", type: "Contact" },
+              { name: "location", type: "Location" },
+              { name: "options", type: "Options" },
+              { name: "claim", type: "Claim" },
+            ],
+          };
+          const value = {
+            contactInfo: { name: form.name, email: form.email || "", other: form.other || "" },
+            location: { country: form.country, state: form.state, city: form.city || "" },
+            options: {
+              acceptTerms: form.acceptTerms,
+              willingToSpeakToLEO: form.willingToSpeakToLEO,
+              willingToLitigate: form.willingToLitigate,
+            },
+            claim: elig.claim,
+          };
+          const signature = await signer.signTypedData(cfg.domain, types, value);
+
+          setStatus($("submitStatus"), "Submitting…", "");
+          const res = await fetch("/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data: { form, claim: elig.claim }, signature }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          const out = await res.json();
+          setStatus($("submitStatus"), `Claim registered across ${out.markets} market(s). Thank you — the coordination team will be in touch.`, "ok");
+          btn.textContent = "Submitted";
+        } catch (e) {
+          setStatus($("submitStatus"), "Submission failed: " + (e.shortMessage || e.message), "err");
+          btn.disabled = false;
+        }
+      });
+
+      // ---- Boot ----------------------------------------------------------------
+      loadConfig();
+      initLocation();
+    </script>
+  </body>
+</html>
