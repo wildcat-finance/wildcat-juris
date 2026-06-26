@@ -11,3 +11,6 @@ src/.db/
 
 # vendored upstream reference archive (re-downloadable, 3.7MB)
 juris.ndx.fi-master.zip
+
+# macOS
+.DS_Store
