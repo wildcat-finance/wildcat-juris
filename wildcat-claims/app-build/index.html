@@ -114,6 +114,29 @@
       let cfg = null, account = null, selectedMarket = null, elig = null;
       let markets = [];
 
+      // --- Delinquency / penalty timing (derived from the grace tracker) ----------
+      // timeDelinquent counts seconds the market has been delinquent; the penalty APR
+      // is active for the portion beyond delinquencyGracePeriod. Default = penalized
+      // for >= cfg.defaultBufferDays.
+      const SEC_PER_DAY = 86400;
+      const delinquentDaysOf = (m) => Math.max(0, m.timeDelinquent || 0) / SEC_PER_DAY;
+      const penalizedDaysOf = (m) =>
+        Math.max(0, (m.timeDelinquent || 0) - (m.delinquencyGracePeriod || 0)) / SEC_PER_DAY;
+      const fmtDays = (d) => (d <= 0 ? "0" : d < 1 ? "<1" : d < 10 ? d.toFixed(1) : String(Math.round(d)));
+
+      // Short status badge: shows days in penalized delinquency even before default.
+      function delinqBadge(m) {
+        const pd = penalizedDaysOf(m);
+        if (m.inDefault) return { text: `in default · penalized ${fmtDays(pd)}d`, cls: "def" };
+        if (pd > 0) return { text: `penalized ${fmtDays(pd)}d / ${cfg.defaultBufferDays}d to default`, cls: "" };
+        if (m.isDelinquent) return { text: "delinquent (within grace)", cls: "" };
+        return { text: "not delinquent", cls: "ok" };
+      }
+      const badgeHtml = (m) => {
+        const b = delinqBadge(m);
+        return `<span class="pill ${b.cls}">${b.text}</span>`;
+      };
+
       async function loadConfig() {
         try {
           cfg = await (await fetch("/config")).json();
@@ -144,7 +167,17 @@
             return;
           }
           $("market").innerHTML = `<option value="">Select a market…</option>` +
-            markets.map((m) => `<option value="${m.market}">${m.name} ${m.inDefault ? "— IN DEFAULT" : "— not in default"}</option>`).join("");
+            markets.map((m) => {
+              const pd = penalizedDaysOf(m);
+              const tag = m.inDefault
+                ? `IN DEFAULT (${fmtDays(pd)}d penalized)`
+                : pd > 0
+                ? `${fmtDays(pd)}d penalized`
+                : m.isDelinquent
+                ? "in grace"
+                : "not delinquent";
+              return `<option value="${m.market}">${m.name} — ${tag}</option>`;
+            }).join("");
           show($("marketWrap"));
           setStatus($("findStatus"), `Found ${markets.length} market(s).`, "ok");
         } catch (e) {
@@ -156,9 +189,8 @@
         selectedMarket = $("market").value || null;
         const m = markets.find((x) => x.market === selectedMarket);
         $("marketHint").innerHTML = m
-          ? `Borrower ${m.borrower.slice(0, 10)}… · ${m.inDefault
-              ? `<span class="pill def">in default</span>`
-              : `<span class="pill">not in default — claims will be rejected</span>`}`
+          ? `Borrower ${m.borrower.slice(0, 10)}… · delinquent ${fmtDays(delinquentDaysOf(m))}d, ` +
+            `${badgeHtml(m)}${m.inDefault ? "" : " — claims open at default"}`
           : "";
         // Reset downstream steps when the market changes.
         elig = null; hide($("eligCard")); hide($("formCard"));
@@ -202,10 +234,11 @@
 
       function renderEligibility() {
         const owed = Number(formatUnits(elig.amountOwedWei, elig.assetDecimals));
-        const defPill = elig.inDefault ? `<span class="pill def">in default</span>` : `<span class="pill">not in default</span>`;
+        const defPill = badgeHtml(elig);
         if (!elig.eligible) {
           const why = !elig.inDefault
-            ? "This market is not in default, so claims are not open for it."
+            ? `This market has been in penalized delinquency for ${fmtDays(penalizedDaysOf(elig))} day(s); ` +
+              `claims open once it reaches ${cfg.defaultBufferDays} days (default).`
             : "This address holds no position in this market.";
           $("eligBody").innerHTML = `<div class="meta">
               <dt>Market</dt><dd>${elig.name} ${defPill}</dd>
