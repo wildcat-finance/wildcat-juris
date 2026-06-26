@@ -13,7 +13,6 @@ export interface FormData {
   /** ISO country code (country-level only; no state/city). */
   country: string;
   acceptTerms: boolean;
-  willingToSpeakToLEO: boolean;
   willingToLitigate: boolean;
 }
 
@@ -90,7 +89,7 @@ function getContactInfoError(d: FormData): string | undefined {
 
 function getOptionsError(d: FormData): string | undefined {
   if (!d.acceptTerms) return 'Must accept terms';
-  if (!(d.willingToLitigate || d.willingToSpeakToLEO)) return 'Invalid options';
+  if (!d.willingToLitigate) return 'Must consent to participate in litigation';
   return undefined;
 }
 
@@ -126,7 +125,6 @@ export const EIP712_TYPES = {
   Location: [{ name: 'country', type: 'string' }],
   Options: [
     { name: 'acceptTerms', type: 'bool' },
-    { name: 'willingToSpeakToLEO', type: 'bool' },
     { name: 'willingToLitigate', type: 'bool' },
   ],
   Claim: [
@@ -149,7 +147,6 @@ const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
   location: { country: form.country },
   options: {
     acceptTerms: form.acceptTerms,
-    willingToSpeakToLEO: form.willingToSpeakToLEO,
     willingToLitigate: form.willingToLitigate,
   },
   claim: {
@@ -168,7 +165,6 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `other: ${form.other || ''}`,
     `country: ${form.country}`,
     `acceptTerms: ${form.acceptTerms}`,
-    `willingToSpeakToLEO: ${form.willingToSpeakToLEO}`,
     `willingToLitigate: ${form.willingToLitigate}`,
     `network: ${claim.network}`,
     `market: ${getAddress(claim.market)}`,

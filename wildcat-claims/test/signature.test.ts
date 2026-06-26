@@ -18,7 +18,6 @@ const form: FormData = {
   other: '',
   country: 'US',
   acceptTerms: true,
-  willingToSpeakToLEO: false,
   willingToLitigate: true,
 };
 
@@ -36,7 +35,6 @@ const typedValue = (f: FormData, c: SignedClaimContext) => ({
   location: { country: f.country },
   options: {
     acceptTerms: f.acceptTerms,
-    willingToSpeakToLEO: f.willingToSpeakToLEO,
     willingToLitigate: f.willingToLitigate,
   },
   claim: {

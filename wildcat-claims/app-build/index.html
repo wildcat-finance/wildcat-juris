@@ -107,8 +107,7 @@
         <label>Country *</label>
         <select id="country"></select>
 
-        <label class="check"><input type="checkbox" id="willingToLitigate" /><span>I am willing to participate in litigation to recover funds.</span></label>
-        <label class="check"><input type="checkbox" id="willingToSpeakToLEO" /><span>I am willing to speak with law enforcement.</span></label>
+        <label class="check"><input type="checkbox" id="willingToLitigate" /><span>I am willing to participate in litigation to recover funds. *</span></label>
         <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and consent to this information being shared with the legal/coordination team. *</span></label>
 
         <button id="submitBtn">Sign &amp; submit claim</button>
@@ -309,14 +308,13 @@
           other: $("other").value.trim(),
           country: $("country").value,
           acceptTerms: $("acceptTerms").checked,
-          willingToSpeakToLEO: $("willingToSpeakToLEO").checked,
           willingToLitigate: $("willingToLitigate").checked,
         };
         if (!form.name) return setStatus($("submitStatus"), "Please enter your name.", "err");
         if (!form.email && !form.other) return setStatus($("submitStatus"), "Provide an email or other contact.", "err");
         if (!form.country) return setStatus($("submitStatus"), "Please select a country.", "err");
+        if (!form.willingToLitigate) return setStatus($("submitStatus"), "You must consent to participate in litigation.", "err");
         if (!form.acceptTerms) return setStatus($("submitStatus"), "You must confirm the consent checkbox.", "err");
-        if (!form.willingToLitigate && !form.willingToSpeakToLEO) return setStatus($("submitStatus"), "Select at least one consent option.", "err");
 
         const btn = $("submitBtn");
         btn.disabled = true;
@@ -327,7 +325,7 @@
           const types = {
             Contact: [ { name: "name", type: "string" }, { name: "email", type: "string" }, { name: "other", type: "string" } ],
             Location: [ { name: "country", type: "string" } ],
-            Options: [ { name: "acceptTerms", type: "bool" }, { name: "willingToSpeakToLEO", type: "bool" }, { name: "willingToLitigate", type: "bool" } ],
+            Options: [ { name: "acceptTerms", type: "bool" }, { name: "willingToLitigate", type: "bool" } ],
             Claim: [
               { name: "network", type: "string" },
               { name: "market", type: "address" },
@@ -340,7 +338,7 @@
           const value = {
             contactInfo: { name: form.name, email: form.email || "", other: form.other || "" },
             location: { country: form.country },
-            options: { acceptTerms: form.acceptTerms, willingToSpeakToLEO: form.willingToSpeakToLEO, willingToLitigate: form.willingToLitigate },
+            options: { acceptTerms: form.acceptTerms, willingToLitigate: form.willingToLitigate },
             claim: elig.claim,
           };
           const signature = await signer.signTypedData(cfg.domain, types, value);

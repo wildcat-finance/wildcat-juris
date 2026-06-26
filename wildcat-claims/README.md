@@ -6,8 +6,9 @@ retargeted from the Indexed Finance exploit to live Wildcat protocol state.
 A claim is one **lender** against one **market**. The lender finds the affected market via
 its **borrower** (the borrower's markets are enumerated on-chain), connects the wallet they
 lent with, and — if the market is in default and they still hold a position — signs a claim
-form (contact, country, consent to litigate / speak to law enforcement) which is persisted to
-LevelDB and mirrored to a Google Sheet.
+form (contact, country, consent to participate in litigation). The signed claim is verified
+and kept in a local LevelDB record; the lender is shown a copyable proof (the signed payload
+plus the verification details). This is a tool for **civil breach-of-contract claims**.
 
 See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
 `../WILDCAT_PROTOCOL_ARCHITECTURE.md` for the on-chain surface this reads.
@@ -48,7 +49,7 @@ src/
     eligibility.ts      default gate + getBorrowerMarkets() + eligibleClaim()
   utils.ts              form validation (country-level) + signature + EIP-712 types
   database.ts           per-(network, market) claim store
-  sheets.ts             Google Sheets mirror (one row per lender per market)
+  (no external sink yet — the copyable proof is the output; export/email is future work)
 app-build/
   index.html            self-contained frontend (ethers + country-state-city via CDN)
 test/
@@ -61,7 +62,7 @@ test/
 ```bash
 npm install
 cp .env.example .env      # set RPC_URL; optionally BORROWER_ADDRESS, DEFAULT_BUFFER_DAYS
-# optional: add .google.json { client_email, private_key, sheet_id } for sheet mirroring
+# (no external sink: a successful submit returns a copyable signed-claim proof)
 npm run typecheck
 npm test
 npm run dev               # ts-node, http on :3001 (serves app-build/)

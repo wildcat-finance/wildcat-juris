@@ -17,7 +17,6 @@ import {
   type SubmitData,
 } from './utils';
 import database from './database';
-import { Sheets } from './sheets';
 
 function asAddress(v: unknown): string | null {
   try {
@@ -37,18 +36,6 @@ async function main(): Promise<void> {
       '⚠  DEBUG_MODE is ON — any lender is assumed to hold >=100 underlying in every market. ' +
         'For testing the signing flow only; NEVER enable in production.'
     );
-  }
-
-  // Optional Google Sheets mirror (skipped if .google.json is absent).
-  let sheets: Sheets | undefined;
-  const googleCredsPath = path.join(__dirname, '..', '.google.json');
-  if (fs.existsSync(googleCredsPath)) {
-    const creds = JSON.parse(fs.readFileSync(googleCredsPath, 'utf8'));
-    sheets = new Sheets(creds.sheet_id, creds.client_email, creds.private_key);
-    await sheets.connect();
-    console.log('Connected to Google Sheet.');
-  } else {
-    console.warn('.google.json not found — sheet mirroring disabled.');
   }
 
   const app = express();
@@ -154,15 +141,6 @@ async function main(): Promise<void> {
     } catch (err: any) {
       console.error('/submit db write:', err.message);
       return res.status(500).send('Failed to persist claim');
-    }
-
-    if (sheets) {
-      try {
-        await sheets.addAccount(account);
-      } catch (err: any) {
-        // Sheet is a mirror; the claim is already durably stored in the DB.
-        console.error('/submit sheet write (non-fatal):', err.message);
-      }
     }
 
     return res.json({
