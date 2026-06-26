@@ -20,9 +20,11 @@ See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
 - **Default gate** — a market is "in default" when, read live, its grace tracker has run a
   buffer past the grace period: `timeDelinquent >= delinquencyGracePeriod + DEFAULT_BUFFER_DAYS`
   (default 90 days).
-- **Eligibility** — for the selected market, the lender's owed amount is `market.balanceOf`
-  (via `MarketLens` when available) plus, when enabled, their share of queued/expired
-  withdrawal batches. Eligible = market in default **and** owed is non-dust.
+- **Eligibility** — for the selected market, the lender's owed amount is their held balance
+  (`MarketLensV2.getLenderAccountData(...).normalizedBalance`, or `market.balanceOf` in
+  direct mode) plus, when enabled, their share of queued/expired withdrawal batches
+  (`MarketLensV2` `normalizedAmountOwed`). Eligible = market in default **and** owed non-dust.
+  All markets are assumed to be Wildcat V2.
 - **Claim** — an EIP-712 / personal_sign signature commits to `{ network, market }`, so it
   can't be replayed to another market or chain. The server re-checks default + position live
   before persisting.
@@ -76,17 +78,18 @@ npm run build && npm start
 | Contract | Address |
 |---|---|
 | WildcatArchController | `0xfEB516d9D946dD487A9346F6fee11f40C6945eE4` |
-| MarketLens | `0xfDA5C5B96bb198D2fca1A01d759620B64Ae5afE7` |
+| MarketLensV2 | `0xfDA5C5B96bb198D2fca1A01d759620B64Ae5afE7` |
 | WildcatHooksFactory | `0xdd7dd3b5076cf89440d05585ff56d246386207be` |
 | WildcatSanctionsSentinel | `0x437e0551892C2C9b06d3fFd248fe60572e08CD1A` |
 
 ## Open items
 
-- **MarketLens ABI** in `abis.ts` is reconstructed, not taken from the deployed artifact.
-  Until the real `.abi` for `getMarketDataWithLenderStatus` is pasted in, the lens read
-  falls back to `balanceOf` (logged once). Set `LENS_MODE=direct` to force the verified path.
-- **Withdrawal math** is best-effort (normalizes remaining scaled amount at the live
-  scaleFactor); verify against protocol redemption math before relying on the figures.
+- **ABIs** are sourced from the Wildcat TypeScript SDK (MarketLensV2 + WildcatMarketV2),
+  so they are authoritative rather than reconstructed. They have only been validated by
+  ethers encode/decode round-trips, not yet against the live node — a first real
+  `/markets` + `/eligibility` call confirms them end-to-end.
+- **V2 only** — `currentState()` decoding and the lens reads assume V2 markets. V1 markets
+  would need the 13-field `MarketState` shape and the V1 lens.
 - **Default definition** is the interim `grace + 90 days` rule, read live — no historical
   pinning. Adjust via `DEFAULT_BUFFER_DAYS`.
 - **Sanctioned/escrowed lenders** are not resolved: a position moved to a sanctions escrow

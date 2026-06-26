@@ -21,7 +21,6 @@ export interface MarketState {
 }
 
 const MARKETS_PAGE = 100n;
-const RAY = 10n ** 27n;
 
 export class Chain {
   readonly provider: JsonRpcProvider;
@@ -111,22 +110,19 @@ export class Chain {
   }
 
   /**
-   * A lender's held market-token position (underlying wei). Uses the lens when
-   * configured; a decode failure auto-falls-back to the verified balanceOf path.
+   * A lender's held market-token position (underlying wei) via
+   * MarketLensV2.getLenderAccountData; a decode/call failure auto-falls-back to the
+   * market's balanceOf. With LENS_MODE=direct, balanceOf is used directly.
    */
   async readLenderHeld(market: string, lender: string): Promise<bigint> {
     const tag = this.blockTag();
     if (this.cfg.lensMode === 'lens') {
       try {
-        const res = await this.lens.getMarketDataWithLenderStatus(lender, market, { blockTag: tag });
-        const ls = res.lenderStatus ?? res[1];
-        return BigInt(ls.normalizedBalance);
+        const data = await this.lens.getLenderAccountData(lender, market, { blockTag: tag });
+        return BigInt(data.normalizedBalance);
       } catch (err: any) {
         if (!this.lensWarned) {
-          console.warn(
-            `MarketLens read failed (${err.message}); falling back to balanceOf. ` +
-              'Verify LENS_ABI against the deployed MarketLens artifact to enable the lens path.'
-          );
+          console.warn(`MarketLensV2.getLenderAccountData failed (${err.message}); falling back to balanceOf.`);
           this.lensWarned = true;
         }
       }
@@ -137,32 +133,19 @@ export class Chain {
 
   /**
    * Lender's still-owed share of queued/expired withdrawal batches, in underlying wei.
-   * Best-effort: normalizes the lender's remaining scaled amount at the live scaleFactor
-   * and subtracts what they've already withdrawn. Verify against protocol redemption math
-   * for fully-paid expired batches before relying on it for legal figures.
+   * Authoritative: sums MarketLensV2 WithdrawalBatchLenderStatus.normalizedAmountOwed
+   * across the market's unpaid batches.
    */
   async readWithdrawalsOwed(market: string, lender: string): Promise<bigint> {
-    const m = this.market(market);
-    const opt = { blockTag: this.blockTag() };
-    const [state, unpaid] = await Promise.all([
-      m.currentState(opt),
-      m.getUnpaidBatchExpiries(opt) as Promise<bigint[]>,
-    ]);
-    const scaleFactor = BigInt(state.scaleFactor);
-    const pending = BigInt(state.pendingWithdrawalExpiry);
-
-    const expiries = new Set<bigint>(unpaid.map((e) => BigInt(e)));
-    if (pending > 0n) expiries.add(pending);
-    if (expiries.size === 0) return 0n;
-
+    const tag = this.blockTag();
+    const expiries: bigint[] = await this.market(market).getUnpaidBatchExpiries({ blockTag: tag });
+    if (expiries.length === 0) return 0n;
+    const statuses = await this.lens.getWithdrawalBatchesDataWithLenderStatus(market, expiries, lender, {
+      blockTag: tag,
+    });
     let total = 0n;
-    for (const expiry of expiries) {
-      const status = await m.getAccountWithdrawalStatus(lender, expiry, opt);
-      const scaled = BigInt(status.scaledAmount);
-      if (scaled === 0n) continue;
-      const normalized = (scaled * scaleFactor) / RAY;
-      const remaining = normalized - BigInt(status.normalizedAmountWithdrawn);
-      if (remaining > 0n) total += remaining;
+    for (const s of statuses) {
+      total += BigInt((s.lenderStatus ?? s[1]).normalizedAmountOwed);
     }
     return total;
   }
