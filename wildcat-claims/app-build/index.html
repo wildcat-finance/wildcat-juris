@@ -313,7 +313,7 @@
             Contact: [ { name: "name", type: "string" }, { name: "email", type: "string" }, { name: "other", type: "string" } ],
             Location: [ { name: "country", type: "string" } ],
             Options: [ { name: "acceptTerms", type: "bool" }, { name: "willingToSpeakToLEO", type: "bool" }, { name: "willingToLitigate", type: "bool" } ],
-            Claim: [ { name: "network", type: "string" }, { name: "market", type: "address" } ],
+            Claim: [ { name: "network", type: "string" }, { name: "market", type: "address" }, { name: "penalizedDays", type: "uint256" } ],
             Data: [ { name: "contactInfo", type: "Contact" }, { name: "location", type: "Location" }, { name: "options", type: "Options" }, { name: "claim", type: "Claim" } ],
           };
           const value = {

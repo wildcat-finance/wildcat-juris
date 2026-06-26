@@ -14,6 +14,8 @@ export interface MarketSummary {
   isDelinquent: boolean;
   timeDelinquent: number;
   delinquencyGracePeriod: number;
+  /** Whole days the penalty APR has been active (timeDelinquent beyond the grace period). */
+  penalizedDays: number;
   /** timeDelinquent >= delinquencyGracePeriod + defaultBufferSec (live). */
   inDefault: boolean;
 }
@@ -56,6 +58,9 @@ export class Eligibility {
       isDelinquent: state.isDelinquent,
       timeDelinquent: Number(state.timeDelinquent),
       delinquencyGracePeriod: Number(state.delinquencyGracePeriod),
+      penalizedDays: Math.floor(
+        Math.max(0, Number(state.timeDelinquent - state.delinquencyGracePeriod)) / 86_400
+      ),
       inDefault: this.isInDefault(state),
     };
   }
@@ -114,7 +119,9 @@ export class Eligibility {
 
     const owed = heldWei + withdrawalsWei;
     const summary = this.summary(info, state);
-    const eligible = summary.inDefault && owed > this.cfg.minOwedWei;
+    // Normally a market must be in default; DEBUG_MODE relaxes that so the signing flow
+    // can be exercised against a not-yet-defaulted (but penalized-delinquent) market.
+    const eligible = (summary.inDefault || this.cfg.debugMode) && owed > this.cfg.minOwedWei;
 
     return {
       ...summary,

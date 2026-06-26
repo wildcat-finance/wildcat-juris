@@ -33,6 +33,7 @@ const cfg = {
   includeWithdrawals: true,
   minOwedWei: 0n,
   lensMode: 'direct',
+  debugMode: true, // demo harness: allow signing non-defaulted markets to exercise the flow
 };
 
 // timeDelinquent for an in-default market: grace + 90d + slack.
@@ -76,7 +77,7 @@ app.use(express.json());
 app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
 app.get('/config', (_req, res) => res.json({
   network: cfg.network, chainId: chainIdFor(cfg.network), borrower: cfg.borrower,
-  defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400), domain: domainFor(cfg.network),
+  defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400), domain: domainFor(cfg.network), debug: cfg.debugMode,
 }));
 
 app.post('/markets', async (req, res) => {
@@ -90,7 +91,7 @@ app.post('/eligibility', async (req, res) => {
   const market = asAddress((req.body || {}).market);
   if (!account || !market) return res.status(400).send('Invalid account/market');
   const result = await eligibility.eligibleClaim(account, market);
-  res.json({ ...result, claim: { network: cfg.network, market } });
+  res.json({ ...result, claim: { network: cfg.network, market, penalizedDays: result.penalizedDays } });
 });
 
 app.post('/submit', async (req, res) => {
@@ -117,8 +118,9 @@ app.get('*', (_req, res) => res.sendFile(path.join(appRoot, 'index.html')));
 async function signedSubmission() {
   const wallet = Wallet.createRandom();
   const market = '0x1111111111111111111111111111111111111111';
+  const result = await eligibility.eligibleClaim(wallet.address, market);
   const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true, willingToSpeakToLEO: false, willingToLitigate: true };
-  const claim = { network: 'mainnet', market: getAddress(market) };
+  const claim = { network: 'mainnet', market: getAddress(market), penalizedDays: result.penalizedDays };
   const sig = await wallet.signMessage(toSignatureString(form, claim));
   return { data: { form, claim }, signature: 'personal_sign_' + sig };
 }

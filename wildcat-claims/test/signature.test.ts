@@ -22,7 +22,7 @@ const form: FormData = {
   willingToLitigate: true,
 };
 
-const claim: SignedClaimContext = { network: 'mainnet', market: MARKET_A };
+const claim: SignedClaimContext = { network: 'mainnet', market: MARKET_A, penalizedDays: 42 };
 
 // Mirrors the structure the frontend signs (and the server reconstructs internally).
 const typedValue = (f: FormData, c: SignedClaimContext) => ({
@@ -33,7 +33,7 @@ const typedValue = (f: FormData, c: SignedClaimContext) => ({
     willingToSpeakToLEO: f.willingToSpeakToLEO,
     willingToLitigate: f.willingToLitigate,
   },
-  claim: { network: c.network, market: c.market },
+  claim: { network: c.network, market: c.market, penalizedDays: c.penalizedDays },
 });
 
 describe('signature verification', () => {

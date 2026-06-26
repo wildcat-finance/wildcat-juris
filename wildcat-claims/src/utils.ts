@@ -22,6 +22,8 @@ export interface SignedClaimContext {
   network: string;
   /** The market the lender is claiming against. */
   market: string;
+  /** Whole days the market has been in penalized delinquency, attested at signing time. */
+  penalizedDays: number;
 }
 
 /** Full submission payload (form + signed claim context). */
@@ -48,6 +50,8 @@ export type AccountData = FormData & {
   isClosed: boolean;
   timeDelinquent: number;
   delinquencyGracePeriod: number;
+  /** Penalized-delinquency days, as attested in the signature. */
+  penalizedDays: number;
   asOfBlock: number;
 };
 
@@ -117,6 +121,7 @@ export const EIP712_TYPES = {
   Claim: [
     { name: 'network', type: 'string' },
     { name: 'market', type: 'address' },
+    { name: 'penalizedDays', type: 'uint256' },
   ],
   Data: [
     { name: 'contactInfo', type: 'Contact' },
@@ -134,7 +139,7 @@ const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
     willingToSpeakToLEO: form.willingToSpeakToLEO,
     willingToLitigate: form.willingToLitigate,
   },
-  claim: { network: claim.network, market: getAddress(claim.market) },
+  claim: { network: claim.network, market: getAddress(claim.market), penalizedDays: claim.penalizedDays },
 });
 
 export const toSignatureString = (form: FormData, claim: SignedClaimContext): string =>
@@ -148,6 +153,7 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `willingToLitigate: ${form.willingToLitigate}`,
     `network: ${claim.network}`,
     `market: ${getAddress(claim.market)}`,
+    `penalizedDays: ${claim.penalizedDays}`,
   ].join('\n');
 
 /** Recover the signer address from an EIP-712 or personal_sign signature. */
@@ -187,6 +193,7 @@ export function toAccount(
     isClosed: result.isClosed,
     timeDelinquent: result.timeDelinquent,
     delinquencyGracePeriod: result.delinquencyGracePeriod,
+    penalizedDays: claim.penalizedDays,
     asOfBlock: result.asOfBlock,
   };
 }

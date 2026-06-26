@@ -120,15 +120,17 @@ describe('eligibleClaim (live default gate)', () => {
     expect(r.amountOwedWei).toBe((100n * 10n ** 18n).toString());
   });
 
-  it('DEBUG: still respects the in-default gate (does not fake the market)', async () => {
+  it('DEBUG: allows a not-yet-defaulted but penalized market, and reports penalizedDays', async () => {
+    const tDelq = BigInt(1000 + 5 * 86_400); // 5 days past the 1000s grace, well under default
     const chain = fakeChain({
       infos: { '0xM': info('0xM') },
-      states: { '0xM': state({ timeDelinquent: NOT_DEFAULTED }) },
+      states: { '0xM': state({ timeDelinquent: tDelq }) },
       held: { '0xM': 0n },
     });
     const r = await new Eligibility(chain, { ...baseCfg, debugMode: true }).eligibleClaim('0xLENDER', '0xM');
     expect(r.inDefault).toBe(false);
-    expect(r.eligible).toBe(false);
+    expect(r.eligible).toBe(true); // debug bypasses the in-default gate
+    expect(r.penalizedDays).toBe(5);
   });
 
   it('respects the dust threshold on the combined total', async () => {

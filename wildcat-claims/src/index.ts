@@ -90,7 +90,11 @@ async function main(): Promise<void> {
     if (!market) return res.status(400).send('Invalid market address');
     try {
       const result = await eligibility.eligibleClaim(account, market);
-      return res.json({ ...result, claim: { network: cfg.network, market }, debug: cfg.debugMode });
+      return res.json({
+        ...result,
+        claim: { network: cfg.network, market, penalizedDays: result.penalizedDays },
+        debug: cfg.debugMode,
+      });
     } catch (err: any) {
       console.error(`/eligibility ${account}/${market}:`, err.message);
       return res.status(500).send('Failed to compute eligibility');
@@ -127,11 +131,13 @@ async function main(): Promise<void> {
       console.error('/submit eligibility check:', err.message);
       return res.status(500).send('Failed to verify eligibility');
     }
-    if (!result.inDefault) {
-      return res.status(400).send('Market is not in default');
-    }
     if (!result.eligible) {
-      return res.status(400).send('No eligible position for this address in this market');
+      // In debug mode the in-default requirement is relaxed, so distinguish the reason.
+      const reason =
+        !cfg.debugMode && !result.inDefault
+          ? 'Market is not in default'
+          : 'No eligible position for this address in this market';
+      return res.status(400).send(reason);
     }
 
     const account = toAccount(address, data.form, data.claim, signature, result);
