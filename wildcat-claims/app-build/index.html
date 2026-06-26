@@ -34,6 +34,9 @@
       .pill.ok { color: var(--ok); border-color: rgba(63,191,127,0.5); }
       .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
       .banner { background: rgba(240,180,41,0.15); border: 1px solid var(--accent); color: var(--accent-2); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; font-weight: 600; }
+      .code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; margin: 6px 0; }
+      .copybtn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 500; margin-bottom: 10px; }
+      .copybtn:hover { border-color: var(--accent); color: var(--accent-2); }
       .status { padding: 12px 14px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
       .status.ok { background: rgba(63,191,127,0.12); color: var(--ok); border: 1px solid rgba(63,191,127,0.4); }
       .status.err { background: rgba(255,107,107,0.1); color: var(--err); border: 1px solid rgba(255,107,107,0.4); }
@@ -110,17 +113,29 @@
 
         <button id="submitBtn">Sign &amp; submit claim</button>
         <div id="submitStatus"></div>
+
+        <div id="receipt" class="hidden">
+          <div id="receiptSummary" class="status ok"></div>
+          <label>What was signed (EIP-712 typed data)</label>
+          <pre id="signedPre" class="code"></pre>
+          <button class="copybtn" data-target="signedPre">Copy signed message</button>
+          <label>Signature &amp; verification proof</label>
+          <pre id="proofPre" class="code"></pre>
+          <button class="copybtn" data-target="proofPre">Copy proof</button>
+          <div id="verifyNote" class="hint"></div>
+        </div>
       </div>
     </div>
 
     <script type="module">
-      import { BrowserProvider, getAddress, formatUnits, isAddress } from "https://cdn.jsdelivr.net/npm/ethers@6.13.2/+esm";
+      import { BrowserProvider, getAddress, formatUnits, isAddress, verifyTypedData } from "https://cdn.jsdelivr.net/npm/ethers@6.13.2/+esm";
       import { Country } from "https://cdn.jsdelivr.net/npm/country-state-city@3.2.1/+esm";
 
       const $ = (id) => document.getElementById(id);
       const show = (el) => el.classList.remove("hidden");
       const hide = (el) => el.classList.add("hidden");
       const setStatus = (el, msg, kind) => { el.className = msg ? "status " + (kind || "") : ""; el.textContent = msg; };
+      const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
       let cfg = null, account = null, selectedMarket = null, elig = null;
       let markets = [];
@@ -313,7 +328,13 @@
             Contact: [ { name: "name", type: "string" }, { name: "email", type: "string" }, { name: "other", type: "string" } ],
             Location: [ { name: "country", type: "string" } ],
             Options: [ { name: "acceptTerms", type: "bool" }, { name: "willingToSpeakToLEO", type: "bool" }, { name: "willingToLitigate", type: "bool" } ],
-            Claim: [ { name: "network", type: "string" }, { name: "market", type: "address" }, { name: "penalizedDays", type: "uint256" } ],
+            Claim: [
+              { name: "network", type: "string" },
+              { name: "market", type: "address" },
+              { name: "penalizedDays", type: "uint256" },
+              { name: "amountOwedWei", type: "uint256" },
+              { name: "asOfBlock", type: "uint256" },
+            ],
             Data: [ { name: "contactInfo", type: "Contact" }, { name: "location", type: "Location" }, { name: "options", type: "Options" }, { name: "claim", type: "Claim" } ],
           };
           const value = {
@@ -330,9 +351,40 @@
             body: JSON.stringify({ data: { form, claim: elig.claim }, signature }),
           });
           if (!res.ok) throw new Error(await res.text());
-          await res.json();
-          setStatus($("submitStatus"), "Claim registered. Thank you — the coordination team will be in touch.", "ok");
+          const out = await res.json();
+          setStatus($("submitStatus"), "", "");
           btn.textContent = "Submitted";
+
+          const amt = Number(formatUnits(elig.claim.amountOwedWei, elig.assetDecimals)).toLocaleString(undefined, { maximumFractionDigits: 6 });
+          $("receiptSummary").innerHTML =
+            `Signed &amp; submitted. <b>${esc(account)}</b> attested owed <b>${amt} ${esc(elig.assetSymbol)}</b> ` +
+            `in <b>${esc(elig.name)}</b> — penalized <b>${elig.claim.penalizedDays}d</b> — as of block <b>${elig.claim.asOfBlock}</b>.`;
+          $("verifyNote").innerHTML =
+            `These figures are committed in the signature and were read from chain at block ${elig.claim.asOfBlock} — anyone can replay that block on an archive node to confirm the market's penalized delinquency and the lender's balance. ` +
+            `Signed no earlier than that block; the server logged receipt at ${esc(out.submittedAt)}.` +
+            (out.debug ? ` <b style="color:var(--accent-2)">⚠ DEBUG: the held amount was assumed (not a real balance) — disable DEBUG_MODE for a real attestation.</b>` : "");
+
+          // Receipt: the exact signed payload + proof the signature verifies, both copyable.
+          let recovered = "";
+          try { recovered = verifyTypedData(cfg.domain, types, value, signature); } catch (_) {}
+          $("signedPre").textContent = JSON.stringify(
+            { domain: cfg.domain, primaryType: "Data", types, message: value }, null, 2);
+          $("proofPre").textContent = JSON.stringify({
+            signer: account,
+            recoveredFromSignature: recovered,
+            signatureValid: !!recovered && recovered.toLowerCase() === account.toLowerCase(),
+            signature,
+            serverResponse: out,
+          }, null, 2);
+          show($("receipt"));
+          $("receipt").querySelectorAll(".copybtn").forEach((b) => {
+            const label = b.textContent;
+            b.onclick = async () => {
+              try { await navigator.clipboard.writeText($(b.dataset.target).textContent); b.textContent = "Copied ✓"; }
+              catch (_) { b.textContent = "Copy failed — select & copy manually"; }
+              setTimeout(() => { b.textContent = label; }, 1400);
+            };
+          });
         } catch (e) {
           setStatus($("submitStatus"), "Submission failed: " + (e.shortMessage || e.message), "err");
           btn.disabled = false;

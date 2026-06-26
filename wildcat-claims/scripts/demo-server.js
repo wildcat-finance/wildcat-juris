@@ -91,7 +91,16 @@ app.post('/eligibility', async (req, res) => {
   const market = asAddress((req.body || {}).market);
   if (!account || !market) return res.status(400).send('Invalid account/market');
   const result = await eligibility.eligibleClaim(account, market);
-  res.json({ ...result, claim: { network: cfg.network, market, penalizedDays: result.penalizedDays } });
+  res.json({
+    ...result,
+    claim: {
+      network: cfg.network,
+      market,
+      penalizedDays: result.penalizedDays,
+      amountOwedWei: result.amountOwedWei,
+      asOfBlock: result.asOfBlock,
+    },
+  });
 });
 
 app.post('/submit', async (req, res) => {
@@ -105,8 +114,13 @@ app.post('/submit', async (req, res) => {
   try { address = verifySignature(data.form, data.claim, signature); } catch { return res.status(400).send('Invalid signature'); }
   const result = await eligibility.eligibleClaim(address, market);
   if (!result.eligible) return res.status(400).send(result.inDefault ? 'No eligible position' : 'Market is not in default');
-  const account = toAccount(address, data.form, data.claim, signature, result);
-  res.json({ ok: true, market, totalOwedWei: result.amountOwedWei, storedFor: account.address });
+  const submittedAt = new Date().toISOString();
+  const account = toAccount(address, data.form, data.claim, signature, result, submittedAt);
+  res.json({
+    ok: true, market, lender: account.address,
+    amountOwedWei: data.claim.amountOwedWei, penalizedDays: data.claim.penalizedDays,
+    asOfBlock: data.claim.asOfBlock, submittedAt, debug: cfg.debugMode,
+  });
 });
 
 // Serve the frontend.
@@ -120,7 +134,10 @@ async function signedSubmission() {
   const market = '0x1111111111111111111111111111111111111111';
   const result = await eligibility.eligibleClaim(wallet.address, market);
   const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true, willingToSpeakToLEO: false, willingToLitigate: true };
-  const claim = { network: 'mainnet', market: getAddress(market), penalizedDays: result.penalizedDays };
+  const claim = {
+    network: 'mainnet', market: getAddress(market),
+    penalizedDays: result.penalizedDays, amountOwedWei: result.amountOwedWei, asOfBlock: result.asOfBlock,
+  };
   const sig = await wallet.signMessage(toSignatureString(form, claim));
   return { data: { form, claim }, signature: 'personal_sign_' + sig };
 }

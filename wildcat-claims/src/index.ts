@@ -92,7 +92,13 @@ async function main(): Promise<void> {
       const result = await eligibility.eligibleClaim(account, market);
       return res.json({
         ...result,
-        claim: { network: cfg.network, market, penalizedDays: result.penalizedDays },
+        claim: {
+          network: cfg.network,
+          market,
+          penalizedDays: result.penalizedDays,
+          amountOwedWei: result.amountOwedWei,
+          asOfBlock: result.asOfBlock,
+        },
         debug: cfg.debugMode,
       });
     } catch (err: any) {
@@ -140,7 +146,8 @@ async function main(): Promise<void> {
       return res.status(400).send(reason);
     }
 
-    const account = toAccount(address, data.form, data.claim, signature, result);
+    const submittedAt = new Date().toISOString();
+    const account = toAccount(address, data.form, data.claim, signature, result, submittedAt);
 
     try {
       await database.putAccount(account);
@@ -158,7 +165,16 @@ async function main(): Promise<void> {
       }
     }
 
-    return res.json({ ok: true, market, totalOwedWei: result.amountOwedWei });
+    return res.json({
+      ok: true,
+      market,
+      lender: address,
+      amountOwedWei: data.claim.amountOwedWei,
+      penalizedDays: data.claim.penalizedDays,
+      asOfBlock: data.claim.asOfBlock,
+      submittedAt,
+      debug: cfg.debugMode,
+    });
   });
 
   // Optionally serve a built frontend if present.

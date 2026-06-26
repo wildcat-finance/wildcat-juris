@@ -17,13 +17,21 @@ export interface FormData {
   willingToLitigate: boolean;
 }
 
-/** Context bound into the signature so a claim is tied to one market on one network. */
+/**
+ * Context bound into the signature. Committing the amount, penalized-delinquency days,
+ * and the block they were read at makes the signature a verifiable attestation: anyone can
+ * replay `asOfBlock` on an archive node and confirm the figures against live chain state.
+ */
 export interface SignedClaimContext {
   network: string;
   /** The market the lender is claiming against. */
   market: string;
-  /** Whole days the market has been in penalized delinquency, attested at signing time. */
+  /** Whole days the market has been in penalized delinquency, as of asOfBlock. */
   penalizedDays: number;
+  /** Lender's owed amount (held + withdrawals), raw wei, as of asOfBlock. */
+  amountOwedWei: string;
+  /** Block number the figures were read at — the on-chain anchor for verification. */
+  asOfBlock: number;
 }
 
 /** Full submission payload (form + signed claim context). */
@@ -52,7 +60,10 @@ export type AccountData = FormData & {
   delinquencyGracePeriod: number;
   /** Penalized-delinquency days, as attested in the signature. */
   penalizedDays: number;
+  /** Block the attested figures were read at (on-chain anchor for verification). */
   asOfBlock: number;
+  /** Server-stamped time the signed claim was received (ISO-8601, UTC). */
+  submittedAt: string;
 };
 
 // ========================================================================== //
@@ -122,6 +133,8 @@ export const EIP712_TYPES = {
     { name: 'network', type: 'string' },
     { name: 'market', type: 'address' },
     { name: 'penalizedDays', type: 'uint256' },
+    { name: 'amountOwedWei', type: 'uint256' },
+    { name: 'asOfBlock', type: 'uint256' },
   ],
   Data: [
     { name: 'contactInfo', type: 'Contact' },
@@ -139,7 +152,13 @@ const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
     willingToSpeakToLEO: form.willingToSpeakToLEO,
     willingToLitigate: form.willingToLitigate,
   },
-  claim: { network: claim.network, market: getAddress(claim.market), penalizedDays: claim.penalizedDays },
+  claim: {
+    network: claim.network,
+    market: getAddress(claim.market),
+    penalizedDays: claim.penalizedDays,
+    amountOwedWei: claim.amountOwedWei,
+    asOfBlock: claim.asOfBlock,
+  },
 });
 
 export const toSignatureString = (form: FormData, claim: SignedClaimContext): string =>
@@ -154,6 +173,8 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `network: ${claim.network}`,
     `market: ${getAddress(claim.market)}`,
     `penalizedDays: ${claim.penalizedDays}`,
+    `amountOwedWei: ${claim.amountOwedWei}`,
+    `asOfBlock: ${claim.asOfBlock}`,
   ].join('\n');
 
 /** Recover the signer address from an EIP-712 or personal_sign signature. */
@@ -173,7 +194,8 @@ export function toAccount(
   form: FormData,
   claim: SignedClaimContext,
   signature: string,
-  result: ClaimResult
+  result: ClaimResult,
+  submittedAt: string
 ): AccountData {
   return {
     ...form,
@@ -185,7 +207,8 @@ export function toAccount(
     borrower: result.borrower,
     assetSymbol: result.assetSymbol,
     assetDecimals: result.assetDecimals,
-    amountOwedWei: result.amountOwedWei,
+    // Attested (signed) figures are the figures of record.
+    amountOwedWei: claim.amountOwedWei,
     heldOwedWei: result.heldOwedWei,
     withdrawalsOwedWei: result.withdrawalsOwedWei,
     withdrawalsError: result.withdrawalsError,
@@ -194,6 +217,7 @@ export function toAccount(
     timeDelinquent: result.timeDelinquent,
     delinquencyGracePeriod: result.delinquencyGracePeriod,
     penalizedDays: claim.penalizedDays,
-    asOfBlock: result.asOfBlock,
+    asOfBlock: claim.asOfBlock,
+    submittedAt,
   };
 }
