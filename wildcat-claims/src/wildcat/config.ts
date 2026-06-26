@@ -14,6 +14,8 @@ export type LensMode = 'lens' | 'direct';
 
 export interface WildcatConfig {
   network: string;
+  /** EIP-155 chain id for the network (mainnet=1, sepolia=11155111). */
+  chainId: number;
   rpcUrl: string;
   addresses: WildcatAddresses;
 
@@ -91,6 +93,7 @@ export function loadConfig(): WildcatConfig {
 
   return {
     network,
+    chainId: network === 'sepolia' ? 11155111 : 1,
     rpcUrl: required('RPC_URL', process.env.RPC_URL),
     addresses,
     defaultBufferSec: Math.floor(bufferDays * DAY_SEC),

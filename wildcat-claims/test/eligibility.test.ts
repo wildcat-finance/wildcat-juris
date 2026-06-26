@@ -7,6 +7,7 @@ const BUFFER = 90 * 86_400; // 7,776,000s
 
 const baseCfg: WildcatConfig = {
   network: 'mainnet',
+  chainId: 1,
   rpcUrl: 'http://localhost',
   addresses: { archController: '', marketLens: '', hooksFactory: '', sanctionsSentinel: '' },
   defaultBufferSec: BUFFER,

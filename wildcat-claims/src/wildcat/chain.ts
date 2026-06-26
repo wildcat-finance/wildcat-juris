@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, type BlockTag } from 'ethers';
+import { Contract, JsonRpcProvider, Network, type BlockTag } from 'ethers';
 import { WildcatConfig } from './config';
 import { ARCH_CONTROLLER_ABI, MARKET_ABI, ERC20_ABI, LENS_ABI } from './abis';
 
@@ -32,7 +32,10 @@ export class Chain {
 
   constructor(cfg: WildcatConfig) {
     this.cfg = cfg;
-    this.provider = new JsonRpcProvider(cfg.rpcUrl);
+    // Pin to a static network: the chain id is known, so skip auto-detection (which
+    // otherwise retries forever if the RPC misbehaves) and fail fast on a bad endpoint.
+    const network = Network.from(cfg.chainId);
+    this.provider = new JsonRpcProvider(cfg.rpcUrl, network, { staticNetwork: network });
     this.arch = new Contract(cfg.addresses.archController, ARCH_CONTROLLER_ABI, this.provider);
     this.lens = new Contract(cfg.addresses.marketLens, LENS_ABI, this.provider);
   }
