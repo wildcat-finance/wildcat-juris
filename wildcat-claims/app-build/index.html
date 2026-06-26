@@ -33,6 +33,7 @@
       .pill.def { color: var(--err); border-color: rgba(255,107,107,0.5); }
       .pill.ok { color: var(--ok); border-color: rgba(63,191,127,0.5); }
       .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+      .banner { background: rgba(240,180,41,0.15); border: 1px solid var(--accent); color: var(--accent-2); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; font-weight: 600; }
       .status { padding: 12px 14px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
       .status.ok { background: rgba(63,191,127,0.12); color: var(--ok); border: 1px solid rgba(63,191,127,0.4); }
       .status.err { background: rgba(255,107,107,0.1); color: var(--err); border: 1px solid rgba(255,107,107,0.4); }
@@ -46,6 +47,8 @@
         <h1>Wildcat Lender Claim Intake</h1>
         <p>Find an affected market by its borrower, then connect the wallet you lent with to register a claim.</p>
       </header>
+
+      <div id="debugBanner" class="banner hidden">⚠ DEBUG MODE — eligibility is faked (any lender is assumed to hold ≥100 of the underlying). For testing the signing flow only.</div>
 
       <div class="card">
         <h2>Context</h2>
@@ -74,6 +77,14 @@
         <button id="connectBtn">Connect wallet</button>
         <div id="walletInfo" class="hint hidden"></div>
         <div id="connectStatus"></div>
+        <div id="debugBox" class="hidden" style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
+          <label>Debug · lender address to assume (≥100 underlying)</label>
+          <div class="inline">
+            <div><input type="text" id="debugAddr" placeholder="0x…" spellcheck="false" /></div>
+            <button id="debugUseBtn">Use</button>
+          </div>
+          <div class="hint">Previews eligibility for this address without a real position. You still sign with your own wallet via MetaMask.</div>
+        </div>
       </div>
 
       <div class="card hidden" id="eligCard">
@@ -144,6 +155,7 @@
             <dt>Network</dt><dd>${cfg.network} <span class="pill">chainId ${cfg.chainId}</span></dd>
             <dt>Default threshold</dt><dd>delinquent for &gt; grace period + ${cfg.defaultBufferDays} days</dd>`;
           if (cfg.borrower) $("borrower").value = cfg.borrower;
+          if (cfg.debug) { show($("debugBanner")); show($("debugBox")); }
         } catch (e) {
           $("contextMeta").innerHTML = `<dd class="status err">Could not load config: ${e.message}</dd>`;
         }
@@ -214,6 +226,18 @@
         }
       });
 
+      // Debug: assume a typed lender address (no wallet connect needed to preview).
+      $("debugUseBtn").addEventListener("click", () => {
+        const a = $("debugAddr").value.trim();
+        if (!isAddress(a)) return setStatus($("connectStatus"), "Enter a valid address.", "err");
+        account = getAddress(a);
+        $("walletInfo").textContent = "Debug lender: " + account;
+        show($("walletInfo"));
+        setStatus($("connectStatus"), "", "");
+        if (selectedMarket) checkEligibility();
+        else setStatus($("connectStatus"), "Select a market above to check.", "");
+      });
+
       // ---- 3 · eligibility -----------------------------------------------------
       async function checkEligibility() {
         show($("eligCard"));
@@ -253,7 +277,7 @@
             <dt>Borrower</dt><dd>${elig.borrower}</dd>
           </div>
           <div class="total" style="margin-top:12px">Owed: <b>${owed.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${elig.assetSymbol}</b>${wd}</div>
-          <div class="hint">Read at block ${elig.asOfBlock}${elig.withdrawalsError ? " · withdrawal read incomplete" : ""}. Re-verified on submit.</div>`;
+          <div class="hint">Read at block ${elig.asOfBlock}${elig.withdrawalsError ? " · withdrawal read incomplete" : ""}${elig.debug ? " · DEBUG: holdings assumed (≥100)" : ""}. Re-verified on submit.</div>`;
         show($("formCard"));
       }
 

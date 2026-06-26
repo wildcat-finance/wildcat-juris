@@ -14,6 +14,7 @@ const baseCfg: WildcatConfig = {
   includeWithdrawals: true,
   minOwedWei: 0n,
   lensMode: 'lens',
+  debugMode: false,
 };
 
 const info = (market: string, over: Partial<MarketInfo> = {}): MarketInfo => ({
@@ -105,6 +106,28 @@ describe('eligibleClaim (live default gate)', () => {
       held: { '0xM': 0n },
     });
     const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM');
+    expect(r.eligible).toBe(false);
+  });
+
+  it('DEBUG: floors the lender to >=100 underlying so a defaulted market is claimable', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') }, // assetDecimals 18
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 0n }, // holds nothing
+    });
+    const r = await new Eligibility(chain, { ...baseCfg, debugMode: true }).eligibleClaim('0xLENDER', '0xM');
+    expect(r.eligible).toBe(true);
+    expect(r.amountOwedWei).toBe((100n * 10n ** 18n).toString());
+  });
+
+  it('DEBUG: still respects the in-default gate (does not fake the market)', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: NOT_DEFAULTED }) },
+      held: { '0xM': 0n },
+    });
+    const r = await new Eligibility(chain, { ...baseCfg, debugMode: true }).eligibleClaim('0xLENDER', '0xM');
+    expect(r.inDefault).toBe(false);
     expect(r.eligible).toBe(false);
   });
 

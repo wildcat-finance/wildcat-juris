@@ -43,6 +43,13 @@ export interface WildcatConfig {
 
   /** Primary read path. 'lens' uses MarketLens; 'direct' uses currentState()+balanceOf. */
   lensMode: LensMode;
+
+  /**
+   * DEBUG (testing only): when true, any lender being checked is assumed to hold >= 100 of
+   * the underlying in every market, so testers can exercise the claim-signing flow without a
+   * real position. Signatures are still verified normally. Env: DEBUG_MODE. Off in production.
+   */
+  debugMode: boolean;
 }
 
 /**
@@ -102,5 +109,6 @@ export function loadConfig(): WildcatConfig {
     includeWithdrawals: (process.env.INCLUDE_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,
+    debugMode: ['1', 'true', 'yes'].includes((process.env.DEBUG_MODE ?? '').toLowerCase()),
   };
 }

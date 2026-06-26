@@ -32,6 +32,13 @@ async function main(): Promise<void> {
   const chain = new Chain(cfg);
   const eligibility = new Eligibility(chain, cfg);
 
+  if (cfg.debugMode) {
+    console.warn(
+      '⚠  DEBUG_MODE is ON — any lender is assumed to hold >=100 underlying in every market. ' +
+        'For testing the signing flow only; NEVER enable in production.'
+    );
+  }
+
   // Optional Google Sheets mirror (skipped if .google.json is absent).
   let sheets: Sheets | undefined;
   const googleCredsPath = path.join(__dirname, '..', '.google.json');
@@ -58,6 +65,7 @@ async function main(): Promise<void> {
       borrower: cfg.borrower ?? null,
       defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
       domain: domainFor(cfg.network),
+      debug: cfg.debugMode,
     })
   );
 
@@ -82,7 +90,7 @@ async function main(): Promise<void> {
     if (!market) return res.status(400).send('Invalid market address');
     try {
       const result = await eligibility.eligibleClaim(account, market);
-      return res.json({ ...result, claim: { network: cfg.network, market } });
+      return res.json({ ...result, claim: { network: cfg.network, market }, debug: cfg.debugMode });
     } catch (err: any) {
       console.error(`/eligibility ${account}/${market}:`, err.message);
       return res.status(500).send('Failed to compute eligibility');

@@ -93,7 +93,7 @@ export class Eligibility {
       this.chain.resolveAsOfBlock(),
     ]);
 
-    const heldWei = await this.chain.readLenderHeld(market, account);
+    let heldWei = await this.chain.readLenderHeld(market, account);
     let withdrawalsWei = 0n;
     let withdrawalsError = false;
     if (this.cfg.includeWithdrawals) {
@@ -103,6 +103,13 @@ export class Eligibility {
         withdrawalsError = true;
         console.error(`Withdrawal read failed for ${market}/${account}: ${err.message}`);
       }
+    }
+
+    // DEBUG ONLY: assume the lender holds >= 100 underlying so the signing flow is testable
+    // without a real position. Does not bypass signature verification or the default gate.
+    if (this.cfg.debugMode) {
+      const floor = 100n * 10n ** BigInt(info.assetDecimals);
+      if (heldWei + withdrawalsWei < floor) heldWei = floor - withdrawalsWei;
     }
 
     const owed = heldWei + withdrawalsWei;
