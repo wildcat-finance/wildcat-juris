@@ -8,8 +8,11 @@ its **borrower** (the borrower's markets are enumerated on-chain), connects the 
 lent with, and — if the market is in default and they still hold a position — signs a claim
 form (contact, country, consent to participate in litigation). The server verifies the
 signature and returns a copyable proof (the signed payload plus the verification details);
-nothing is persisted yet (export/email is future work). This is a tool for **civil
-breach-of-contract claims**.
+nothing is persisted yet (export/email is future work).
+
+The lender submits this proof to the **Wildcat Foundation** as evidence that they are an
+impacted lender, in order to receive the (non-public) borrower information needed to pursue a
+**civil breach-of-contract claim**.
 
 See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
 `../WILDCAT_PROTOCOL_ARCHITECTURE.md` for the on-chain surface this reads.

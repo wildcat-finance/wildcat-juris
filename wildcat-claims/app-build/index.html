@@ -48,7 +48,7 @@
     <div class="wrap">
       <header>
         <h1>Wildcat Lender Claim Intake</h1>
-        <p>Find an affected market by its borrower, then connect the wallet you lent with to register a claim.</p>
+        <p>Find an affected market by its borrower, then connect the wallet you lent with to produce a signed proof of your eligibility as an impacted lender.</p>
       </header>
 
       <div id="debugBanner" class="banner hidden">⚠ DEBUG MODE — eligibility is faked (any lender is assumed to hold ≥100 of the underlying). For testing the signing flow only.</div>
@@ -108,7 +108,7 @@
         <select id="country"></select>
 
         <label class="check"><input type="checkbox" id="willingToLitigate" /><span>I am willing to participate in litigation to recover funds. *</span></label>
-        <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and consent to this information being shared with the legal/coordination team. *</span></label>
+        <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and intend to submit this proof to the Wildcat Foundation as evidence of my eligibility as an impacted lender. *</span></label>
 
         <button id="submitBtn">Sign &amp; submit claim</button>
         <div id="submitStatus"></div>
