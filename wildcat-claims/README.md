@@ -6,9 +6,10 @@ retargeted from the Indexed Finance exploit to live Wildcat protocol state.
 A claim is one **lender** against one **market**. The lender finds the affected market via
 its **borrower** (the borrower's markets are enumerated on-chain), connects the wallet they
 lent with, and — if the market is in default and they still hold a position — signs a claim
-form (contact, country, consent to participate in litigation). The signed claim is verified
-and kept in a local LevelDB record; the lender is shown a copyable proof (the signed payload
-plus the verification details). This is a tool for **civil breach-of-contract claims**.
+form (contact, country, consent to participate in litigation). The server verifies the
+signature and returns a copyable proof (the signed payload plus the verification details);
+nothing is persisted yet (export/email is future work). This is a tool for **civil
+breach-of-contract claims**.
 
 See `../JURIS_WILDCAT_ADAPTATION_SPEC.md` for the original design and
 `../WILDCAT_PROTOCOL_ARCHITECTURE.md` for the on-chain surface this reads.
@@ -48,8 +49,7 @@ src/
     chain.ts            market enumeration, borrower filter, live state, lender reads
     eligibility.ts      default gate + getBorrowerMarkets() + eligibleClaim()
   utils.ts              form validation (country-level) + signature + EIP-712 types
-  database.ts           per-(network, market) claim store
-  (no external sink yet — the copyable proof is the output; export/email is future work)
+  (no persistence yet — /submit verifies and returns a copyable proof; export/email is future work)
 app-build/
   index.html            self-contained frontend (ethers + country-state-city via CDN)
 test/

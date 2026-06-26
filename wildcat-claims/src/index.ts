@@ -13,10 +13,8 @@ import {
   verifySignature,
   chainIdFor,
   domainFor,
-  toAccount,
   type SubmitData,
 } from './utils';
-import database from './database';
 
 function asAddress(v: unknown): string | null {
   try {
@@ -133,16 +131,8 @@ async function main(): Promise<void> {
       return res.status(400).send(reason);
     }
 
-    const submittedAt = new Date().toISOString();
-    const account = toAccount(address, data.form, data.claim, signature, result, submittedAt);
-
-    try {
-      await database.putAccount(account);
-    } catch (err: any) {
-      console.error('/submit db write:', err.message);
-      return res.status(500).send('Failed to persist claim');
-    }
-
+    // No persistence: the signed claim is verified and returned as a copyable proof.
+    // (Export/email is future work.)
     return res.json({
       ok: true,
       market,
@@ -150,7 +140,7 @@ async function main(): Promise<void> {
       amountOwedWei: data.claim.amountOwedWei,
       penalizedDays: data.claim.penalizedDays,
       asOfBlock: data.claim.asOfBlock,
-      submittedAt,
+      submittedAt: new Date().toISOString(),
       debug: cfg.debugMode,
     });
   });

@@ -14,7 +14,6 @@ const { Eligibility } = require('../dist/wildcat/eligibility');
 const {
   getFormDataError,
   verifySignature,
-  toAccount,
   toSignatureString,
   chainIdFor,
   domainFor,
@@ -114,12 +113,10 @@ app.post('/submit', async (req, res) => {
   try { address = verifySignature(data.form, data.claim, signature); } catch { return res.status(400).send('Invalid signature'); }
   const result = await eligibility.eligibleClaim(address, market);
   if (!result.eligible) return res.status(400).send(result.inDefault ? 'No eligible position' : 'Market is not in default');
-  const submittedAt = new Date().toISOString();
-  const account = toAccount(address, data.form, data.claim, signature, result, submittedAt);
   res.json({
-    ok: true, market, lender: account.address,
+    ok: true, market, lender: address,
     amountOwedWei: data.claim.amountOwedWei, penalizedDays: data.claim.penalizedDays,
-    asOfBlock: data.claim.asOfBlock, submittedAt, debug: cfg.debugMode,
+    asOfBlock: data.claim.asOfBlock, submittedAt: new Date().toISOString(), debug: cfg.debugMode,
   });
 });
 

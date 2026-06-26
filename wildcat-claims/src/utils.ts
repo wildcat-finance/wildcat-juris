@@ -1,6 +1,5 @@
 import { Country } from 'country-state-city';
 import { verifyMessage, verifyTypedData, getAddress, type TypedDataDomain } from 'ethers';
-import type { ClaimResult } from './wildcat/eligibility';
 
 // ========================================================================== //
 //                                   Types                                    //
@@ -38,32 +37,6 @@ export interface SubmitData {
   form: FormData;
   claim: SignedClaimContext;
 }
-
-/** Persisted claim record: one lender, one market. */
-export type AccountData = FormData & {
-  address: string;
-  signature: string;
-  network: string;
-  market: string;
-  marketName: string;
-  borrower: string;
-  assetSymbol: string;
-  assetDecimals: number;
-  amountOwedWei: string;
-  heldOwedWei: string;
-  withdrawalsOwedWei: string;
-  withdrawalsError: boolean;
-  inDefault: boolean;
-  isClosed: boolean;
-  timeDelinquent: number;
-  delinquencyGracePeriod: number;
-  /** Penalized-delinquency days, as attested in the signature. */
-  penalizedDays: number;
-  /** Block the attested figures were read at (on-chain anchor for verification). */
-  asOfBlock: number;
-  /** Server-stamped time the signed claim was received (ISO-8601, UTC). */
-  submittedAt: string;
-};
 
 // ========================================================================== //
 //                              Form validation                               //
@@ -183,37 +156,4 @@ export function verifySignature(
     return verifyMessage(toSignatureString(form, claim), signature.replace('personal_sign_', ''));
   }
   return verifyTypedData(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim), signature);
-}
-
-export function toAccount(
-  address: string,
-  form: FormData,
-  claim: SignedClaimContext,
-  signature: string,
-  result: ClaimResult,
-  submittedAt: string
-): AccountData {
-  return {
-    ...form,
-    address: getAddress(address),
-    signature,
-    network: claim.network,
-    market: getAddress(claim.market),
-    marketName: result.name,
-    borrower: result.borrower,
-    assetSymbol: result.assetSymbol,
-    assetDecimals: result.assetDecimals,
-    // Attested (signed) figures are the figures of record.
-    amountOwedWei: claim.amountOwedWei,
-    heldOwedWei: result.heldOwedWei,
-    withdrawalsOwedWei: result.withdrawalsOwedWei,
-    withdrawalsError: result.withdrawalsError,
-    inDefault: result.inDefault,
-    isClosed: result.isClosed,
-    timeDelinquent: result.timeDelinquent,
-    delinquencyGracePeriod: result.delinquencyGracePeriod,
-    penalizedDays: claim.penalizedDays,
-    asOfBlock: claim.asOfBlock,
-    submittedAt,
-  };
 }
