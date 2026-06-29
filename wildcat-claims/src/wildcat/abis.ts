@@ -60,6 +60,15 @@ export const ERC20_ABI = [
 ];
 
 /**
+ * Multicall3 (canonical 0xcA11bde05977b3631167028862bE2a173976CA11 on most chains).
+ * aggregate3 batches many read calls into one eth_call. Declared `view` so ethers performs
+ * an eth_call (the on-chain function is payable, but the selector is identical).
+ */
+export const MULTICALL3_ABI = [
+  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)',
+];
+
+/**
  * MarketLensV2 (subset). Shapes from contracts/MarketLensV2.sol + MarketLensStructs.sol.
  *
  * - getLenderAccountData(lender, market) -> LenderAccountData: the lender's position;

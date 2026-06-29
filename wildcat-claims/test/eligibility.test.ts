@@ -51,7 +51,9 @@ function fakeChain(o: FakeOpts): Chain {
   return {
     resolveAsOfBlock: async () => o.block ?? 999,
     getAllMarkets: async () => Object.keys(o.infos ?? {}),
-    readBorrower: async (m: string) => o.infos![m].borrower,
+    readBorrowers: async (markets: string[]) => markets.map((m) => o.infos![m].borrower),
+    readMarketsInfoAndState: async (markets: string[]) =>
+      markets.map((m) => ({ info: o.infos![m], state: o.states![m] })),
     getMarketInfo: async (m: string) => o.infos![m],
     getMarketState: async (m: string) => o.states![m],
     readLenderHeld: async (m: string) => o.held?.[m] ?? 0n,

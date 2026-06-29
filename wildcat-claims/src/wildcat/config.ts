@@ -7,6 +7,8 @@ export interface WildcatAddresses {
   marketLens: string;
   hooksFactory: string;
   sanctionsSentinel: string;
+  /** Multicall3 — same canonical address on most chains; batches the discovery reads. */
+  multicall3: string;
 }
 
 /** How the per-market/per-lender reads are performed. */
@@ -62,6 +64,7 @@ const DEPLOYMENTS: Record<string, WildcatAddresses> = {
     marketLens: '0xfDA5C5B96bb198D2fca1A01d759620B64Ae5afE7',
     hooksFactory: '0xdd7dd3b5076cf89440d05585ff56d246386207be',
     sanctionsSentinel: '0x437e0551892C2C9b06d3fFd248fe60572e08CD1A',
+    multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
   },
   // Sepolia: ArchController must be supplied via env until confirmed from a live deploy.
   sepolia: {
@@ -69,6 +72,7 @@ const DEPLOYMENTS: Record<string, WildcatAddresses> = {
     marketLens: process.env.MARKET_LENS ?? '0xa47237531fae13c82a4361d68aa1e53fc939d70f',
     hooksFactory: process.env.HOOKS_FACTORY ?? '0xe3e4b7c9e0ab4ccbc70e0583dca7b4db9b4cfd88',
     sanctionsSentinel: process.env.SANCTIONS_SENTINEL ?? '',
+    multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
   },
 };
 
@@ -93,6 +97,7 @@ export function loadConfig(): WildcatConfig {
     sanctionsSentinel: base.sanctionsSentinel
       ? getAddress(process.env.SANCTIONS_SENTINEL ?? base.sanctionsSentinel)
       : '',
+    multicall3: getAddress(process.env.MULTICALL3 ?? base.multicall3),
   };
 
   const lensMode: LensMode = (process.env.LENS_MODE ?? 'lens') === 'direct' ? 'direct' : 'lens';
