@@ -19,6 +19,7 @@ impacted lender, in order to receive the (non-public) borrower information neede
 ```
 .
   README.md                         this file
+  DEPLOY_VERCEL.md                  how to deploy on Vercel
   JURIS_WILDCAT_ADAPTATION_SPEC.md  the adaptation spec (Juris → Wildcat)
   WILDCAT_PROTOCOL_ARCHITECTURE.md  the on-chain surface this reads
   EXPLAINER.md                      the original Juris design
@@ -83,6 +84,12 @@ npm run build && npm start
 
 No build step is needed to demo the UI without an RPC: `node scripts/demo-server.js` runs the
 real eligibility + signature code against a mock chain.
+
+## Deploy
+
+The app runs on Vercel as a single serverless function (it serves both the page and the API).
+See **[DEPLOY_VERCEL.md](DEPLOY_VERCEL.md)** for the full runbook — the key prerequisite is that
+the deployed function can reach your `RPC_URL`, and `DEBUG_MODE` must stay off in production.
 
 ## Mainnet addresses (baked into `wildcat-claims/src/wildcat/config.ts`)
 
