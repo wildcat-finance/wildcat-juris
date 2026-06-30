@@ -32,7 +32,7 @@ const cfg = {
   includeWithdrawals: true,
   minOwedWei: 0n,
   lensMode: 'direct',
-  debugMode: true, // demo harness: allow signing non-defaulted markets to exercise the flow
+  debugMode: false, // production-honest; the mock defaulted market is eligible without debug
 };
 
 // timeDelinquent for an in-default market: grace + 90d + slack.
@@ -59,7 +59,10 @@ const mockChain = {
     const m = MARKETS[market];
     return { isClosed: false, isDelinquent: m.isDelinquent, timeDelinquent: m.timeDelinquent, delinquencyGracePeriod: m.grace };
   },
-  async readBorrower() { return DEMO_BORROWER; }, // every demo market belongs to DEMO_BORROWER
+  async readBorrowers(markets) { return markets.map(() => DEMO_BORROWER); }, // every demo market belongs to DEMO_BORROWER
+  async readMarketsInfoAndState(markets) {
+    return Promise.all(markets.map(async (m) => ({ info: await this.getMarketInfo(m), state: await this.getMarketState(m) })));
+  },
   async readLenderHeld(market) { return MARKETS[market].owed; }, // any connected wallet sees a position
   async readWithdrawalsOwed() { return 0n; },
   async resolveAsOfBlock() { return 20_500_000; },

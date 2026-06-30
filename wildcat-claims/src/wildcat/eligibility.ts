@@ -73,13 +73,12 @@ export class Eligibility {
   async getBorrowerMarkets(borrower: string): Promise<MarketSummary[]> {
     const all = await this.chain.getAllMarkets();
     const target = borrower.toLowerCase();
-    const borrowers = await Promise.all(all.map((m) => this.chain.readBorrower(m)));
-    const matches = all.filter((_, i) => borrowers[i].toLowerCase() === target);
-    const summaries = await Promise.all(
-      matches.map(async (m) =>
-        this.summary(await this.chain.getMarketInfo(m), await this.chain.getMarketState(m))
-      )
-    );
+    // One multicall for every market's borrower(), then one batched read of info+state
+    // for just the matches — a handful of eth_calls total instead of O(markets).
+    const borrowers = await this.chain.readBorrowers(all);
+    const matches = all.filter((_, i) => (borrowers[i] ?? '').toLowerCase() === target);
+    const data = await this.chain.readMarketsInfoAndState(matches);
+    const summaries = data.map(({ info, state }) => this.summary(info, state));
     // Defaulted markets first, then by name.
     return summaries.sort(
       (a, b) => Number(b.inDefault) - Number(a.inDefault) || a.name.localeCompare(b.name)

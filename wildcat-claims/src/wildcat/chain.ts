@@ -1,6 +1,15 @@
-import { Contract, JsonRpcProvider, Network, type BlockTag } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, Network, type BlockTag } from 'ethers';
 import { WildcatConfig } from './config';
-import { ARCH_CONTROLLER_ABI, MARKET_ABI, ERC20_ABI, LENS_ABI } from './abis';
+import { ARCH_CONTROLLER_ABI, MARKET_ABI, ERC20_ABI, LENS_ABI, MULTICALL3_ABI } from './abis';
+
+interface Call3 {
+  target: string;
+  callData: string;
+}
+interface Result3 {
+  success: boolean;
+  returnData: string;
+}
 
 /** Immutable market identity (cached). */
 export interface MarketInfo {
@@ -26,7 +35,10 @@ export class Chain {
   readonly provider: JsonRpcProvider;
   readonly arch: Contract;
   readonly lens: Contract;
+  readonly multicall: Contract;
   private readonly cfg: WildcatConfig;
+  private readonly marketIface = new Interface(MARKET_ABI);
+  private readonly erc20Iface = new Interface(ERC20_ABI);
   private readonly infoCache = new Map<string, MarketInfo>();
   private lensWarned = false;
 
@@ -38,6 +50,7 @@ export class Chain {
     this.provider = new JsonRpcProvider(cfg.rpcUrl, network, { staticNetwork: network });
     this.arch = new Contract(cfg.addresses.archController, ARCH_CONTROLLER_ABI, this.provider);
     this.lens = new Contract(cfg.addresses.marketLens, LENS_ABI, this.provider);
+    this.multicall = new Contract(cfg.addresses.multicall3, MULTICALL3_ABI, this.provider);
   }
 
   market(address: string): Contract {
@@ -46,6 +59,14 @@ export class Chain {
 
   private blockTag(): BlockTag {
     return this.cfg.snapshotBlock ?? 'latest';
+  }
+
+  /** Batch many read calls into a single eth_call via Multicall3.aggregate3. */
+  private async aggregate3(calls: Call3[]): Promise<Result3[]> {
+    if (calls.length === 0) return [];
+    const reqs = calls.map((c) => ({ target: c.target, allowFailure: true, callData: c.callData }));
+    const res = await this.multicall.aggregate3(reqs, { blockTag: this.blockTag() });
+    return res.map((r: any) => ({ success: r.success ?? r[0], returnData: r.returnData ?? r[1] }));
   }
 
   /** Block the reads resolve to, recorded in each claim for audit. */
@@ -77,9 +98,80 @@ export class Chain {
     }
   }
 
-  /** A market's immutable borrower (one call) — used to filter the registry. */
-  async readBorrower(market: string): Promise<string> {
-    return this.market(market).borrower({ blockTag: this.blockTag() });
+  /** Every market's immutable borrower, in ONE eth_call via Multicall3 (for the registry filter). */
+  async readBorrowers(markets: string[]): Promise<(string | null)[]> {
+    const callData = this.marketIface.encodeFunctionData('borrower');
+    const results = await this.aggregate3(markets.map((target) => ({ target, callData })));
+    return results.map((r) =>
+      r.success ? (this.marketIface.decodeFunctionResult('borrower', r.returnData)[0] as string) : null
+    );
+  }
+
+  /**
+   * Market identity + live state for a set of markets, batched via Multicall3: one eth_call
+   * for {currentState, borrower, name, asset, delinquencyGracePeriod} across all markets, then
+   * one for {symbol, decimals} across the unique underlying assets.
+   */
+  async readMarketsInfoAndState(
+    markets: string[]
+  ): Promise<{ info: MarketInfo; state: MarketState }[]> {
+    if (markets.length === 0) return [];
+    const fns = ['currentState', 'borrower', 'name', 'asset', 'delinquencyGracePeriod'] as const;
+
+    const calls: Call3[] = [];
+    for (const target of markets) {
+      for (const fn of fns) calls.push({ target, callData: this.marketIface.encodeFunctionData(fn) });
+    }
+    const res = await this.aggregate3(calls);
+
+    const dec = (fn: string, r: Result3) => this.marketIface.decodeFunctionResult(fn, r.returnData);
+    const rows = markets.map((market, i) => {
+      const b = i * fns.length;
+      const state = dec('currentState', res[b])[0];
+      return {
+        market,
+        borrower: dec('borrower', res[b + 1])[0] as string,
+        name: dec('name', res[b + 2])[0] as string,
+        asset: dec('asset', res[b + 3])[0] as string,
+        grace: BigInt(dec('delinquencyGracePeriod', res[b + 4])[0]),
+        state,
+      };
+    });
+
+    // Token metadata for the unique assets (one more batched call).
+    const assets = [...new Set(rows.map((r) => r.asset.toLowerCase()))];
+    const metaCalls: Call3[] = [];
+    for (const a of assets) {
+      metaCalls.push({ target: a, callData: this.erc20Iface.encodeFunctionData('symbol') });
+      metaCalls.push({ target: a, callData: this.erc20Iface.encodeFunctionData('decimals') });
+    }
+    const metaRes = await this.aggregate3(metaCalls);
+    const meta = new Map<string, { symbol: string; decimals: number }>();
+    assets.forEach((a, i) => {
+      const symbol = this.erc20Iface.decodeFunctionResult('symbol', metaRes[i * 2].returnData)[0] as string;
+      const decimals = Number(this.erc20Iface.decodeFunctionResult('decimals', metaRes[i * 2 + 1].returnData)[0]);
+      meta.set(a, { symbol, decimals });
+    });
+
+    return rows.map((r) => {
+      const tm = meta.get(r.asset.toLowerCase())!;
+      const info: MarketInfo = {
+        market: r.market,
+        borrower: r.borrower,
+        name: r.name,
+        asset: r.asset,
+        assetSymbol: tm.symbol,
+        assetDecimals: tm.decimals,
+      };
+      const state: MarketState = {
+        isClosed: r.state.isClosed,
+        isDelinquent: r.state.isDelinquent,
+        timeDelinquent: BigInt(r.state.timeDelinquent),
+        delinquencyGracePeriod: r.grace,
+      };
+      this.infoCache.set(r.market.toLowerCase(), info);
+      return { info, state };
+    });
   }
 
   /** Immutable market identity (borrower, name, asset, token metadata). Cached. */

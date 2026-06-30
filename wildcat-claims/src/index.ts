@@ -1,156 +1,14 @@
-import express, { type Request, type Response } from 'express';
-import cors from 'cors';
 import fs from 'fs';
-import path from 'path';
 import https from 'https';
-import { getAddress } from 'ethers';
+import { createApp } from './app';
 
-import { loadConfig } from './wildcat/config';
-import { Chain } from './wildcat/chain';
-import { Eligibility } from './wildcat/eligibility';
-import {
-  getFormDataError,
-  verifySignature,
-  chainIdFor,
-  domainFor,
-  type SubmitData,
-} from './utils';
-
-function asAddress(v: unknown): string | null {
-  try {
-    return typeof v === 'string' ? getAddress(v) : null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Local / self-hosted entrypoint. (On Vercel the app is served via api/index.ts instead —
+ * see DEPLOY_VERCEL.md.) Builds the Express app and listens; in MODE=production it terminates
+ * TLS on 443 with a port-80 redirect.
+ */
 async function main(): Promise<void> {
-  const cfg = loadConfig();
-  const chain = new Chain(cfg);
-  const eligibility = new Eligibility(chain, cfg);
-
-  if (cfg.debugMode) {
-    console.warn(
-      '⚠  DEBUG_MODE is ON — any lender is assumed to hold >=100 underlying in every market. ' +
-        'For testing the signing flow only; NEVER enable in production.'
-    );
-  }
-
-  const app = express();
-  app.use(cors());
-  app.use(express.json());
-
-  app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
-
-  // Public config the frontend needs to render context and build EIP-712 typed data.
-  app.get('/config', (_req, res) =>
-    res.json({
-      network: cfg.network,
-      chainId: chainIdFor(cfg.network),
-      borrower: cfg.borrower ?? null,
-      defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
-      domain: domainFor(cfg.network),
-      debug: cfg.debugMode,
-    })
-  );
-
-  // Discover a borrower's markets (with names + live default status) for selection.
-  app.post('/markets', async (req: Request, res: Response) => {
-    const borrower = asAddress((req.body ?? {}).borrower);
-    if (!borrower) return res.status(400).send('Invalid borrower address');
-    try {
-      return res.json({ borrower, markets: await eligibility.getBorrowerMarkets(borrower) });
-    } catch (err: any) {
-      console.error(`/markets ${borrower}:`, err.message);
-      return res.status(500).send('Failed to load borrower markets');
-    }
-  });
-
-  // Check one lender against one market; returns the canonical claim context to sign.
-  app.post('/eligibility', async (req: Request, res: Response) => {
-    const { account: rawAccount, market: rawMarket } = req.body ?? {};
-    const account = asAddress(rawAccount);
-    const market = asAddress(rawMarket);
-    if (!account) return res.status(400).send('Invalid account address');
-    if (!market) return res.status(400).send('Invalid market address');
-    try {
-      const result = await eligibility.eligibleClaim(account, market);
-      return res.json({
-        ...result,
-        claim: {
-          network: cfg.network,
-          market,
-          penalizedDays: result.penalizedDays,
-          amountOwedWei: result.amountOwedWei,
-          asOfBlock: result.asOfBlock,
-        },
-        debug: cfg.debugMode,
-      });
-    } catch (err: any) {
-      console.error(`/eligibility ${account}/${market}:`, err.message);
-      return res.status(500).send('Failed to compute eligibility');
-    }
-  });
-
-  // Submit a signed claim.
-  app.post('/submit', async (req: Request, res: Response) => {
-    const { data, signature } = (req.body ?? {}) as { data?: SubmitData; signature?: string };
-    if (!data?.form || !data?.claim || typeof signature !== 'string') {
-      return res.status(400).send('Malformed submission');
-    }
-
-    const formError = getFormDataError(data.form);
-    if (formError) return res.status(400).send(formError);
-
-    if (data.claim.network !== cfg.network) return res.status(409).send('Wrong network');
-    const market = asAddress(data.claim.market);
-    if (!market) return res.status(400).send('Invalid market address');
-
-    // Recover signer.
-    let address: string;
-    try {
-      address = verifySignature(data.form, data.claim, signature);
-    } catch {
-      return res.status(400).send('Invalid signature');
-    }
-
-    // Server-side re-check (live): never trust client-supplied eligibility.
-    let result;
-    try {
-      result = await eligibility.eligibleClaim(address, market);
-    } catch (err: any) {
-      console.error('/submit eligibility check:', err.message);
-      return res.status(500).send('Failed to verify eligibility');
-    }
-    if (!result.eligible) {
-      // In debug mode the in-default requirement is relaxed, so distinguish the reason.
-      const reason =
-        !cfg.debugMode && !result.inDefault
-          ? 'Market is not in default'
-          : 'No eligible position for this address in this market';
-      return res.status(400).send(reason);
-    }
-
-    // No persistence: the signed claim is verified and returned as a copyable proof.
-    // (Export/email is future work.)
-    return res.json({
-      ok: true,
-      market,
-      lender: address,
-      amountOwedWei: data.claim.amountOwedWei,
-      penalizedDays: data.claim.penalizedDays,
-      asOfBlock: data.claim.asOfBlock,
-      submittedAt: new Date().toISOString(),
-      debug: cfg.debugMode,
-    });
-  });
-
-  // Optionally serve a built frontend if present.
-  const appRootPath = path.join(__dirname, '..', 'app-build');
-  if (fs.existsSync(appRootPath)) {
-    app.use(express.static(appRootPath));
-    app.get('*', (_req, res) => res.sendFile(path.join(appRootPath, 'index.html')));
-  }
+  const app = createApp();
 
   const PROD = process.env.MODE === 'production';
   const PORT = PROD ? 443 : Number(process.env.PORT ?? 3001);
@@ -166,7 +24,7 @@ async function main(): Promise<void> {
     const { startRedirectServer } = await import('./httpRedirect');
     startRedirectServer();
   } else {
-    app.listen(PORT, () => console.log(`listening on ${PORT} (http) — network=${cfg.network}`));
+    app.listen(PORT, () => console.log(`listening on ${PORT} (http)`));
   }
 }
 
