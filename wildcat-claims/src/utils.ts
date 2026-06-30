@@ -1,5 +1,12 @@
 import { Country } from 'country-state-city';
-import { verifyMessage, verifyTypedData, getAddress, type TypedDataDomain } from 'ethers';
+import {
+  verifyMessage,
+  verifyTypedData,
+  getAddress,
+  hashMessage,
+  TypedDataEncoder,
+  type TypedDataDomain,
+} from 'ethers';
 
 // ========================================================================== //
 //                                   Types                                    //
@@ -12,7 +19,6 @@ export interface FormData {
   /** ISO country code (country-level only; no state/city). */
   country: string;
   acceptTerms: boolean;
-  willingToLitigate: boolean;
 }
 
 /**
@@ -62,7 +68,6 @@ function getContactInfoError(d: FormData): string | undefined {
 
 function getOptionsError(d: FormData): string | undefined {
   if (!d.acceptTerms) return 'Must accept terms';
-  if (!d.willingToLitigate) return 'Must consent to participate in litigation';
   return undefined;
 }
 
@@ -96,10 +101,7 @@ export const EIP712_TYPES = {
     { name: 'other', type: 'string' },
   ],
   Location: [{ name: 'country', type: 'string' }],
-  Options: [
-    { name: 'acceptTerms', type: 'bool' },
-    { name: 'willingToLitigate', type: 'bool' },
-  ],
+  Options: [{ name: 'acceptTerms', type: 'bool' }],
   Claim: [
     { name: 'network', type: 'string' },
     { name: 'market', type: 'address' },
@@ -118,10 +120,7 @@ export const EIP712_TYPES = {
 const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
   contactInfo: { name: form.name, email: form.email || '', other: form.other || '' },
   location: { country: form.country },
-  options: {
-    acceptTerms: form.acceptTerms,
-    willingToLitigate: form.willingToLitigate,
-  },
+  options: { acceptTerms: form.acceptTerms },
   claim: {
     network: claim.network,
     market: getAddress(claim.market),
@@ -138,7 +137,6 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `other: ${form.other || ''}`,
     `country: ${form.country}`,
     `acceptTerms: ${form.acceptTerms}`,
-    `willingToLitigate: ${form.willingToLitigate}`,
     `network: ${claim.network}`,
     `market: ${getAddress(claim.market)}`,
     `penalizedDays: ${claim.penalizedDays}`,
@@ -146,7 +144,7 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `asOfBlock: ${claim.asOfBlock}`,
   ].join('\n');
 
-/** Recover the signer address from an EIP-712 or personal_sign signature. */
+/** Recover the signer address from an EIP-712 or personal_sign signature (EOA / ECDSA). */
 export function verifySignature(
   form: FormData,
   claim: SignedClaimContext,
@@ -156,4 +154,14 @@ export function verifySignature(
     return verifyMessage(toSignatureString(form, claim), signature.replace('personal_sign_', ''));
   }
   return verifyTypedData(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim), signature);
+}
+
+/**
+ * The 32-byte digest the lender signed — the value an EIP-1271 wallet (e.g. a Safe) checks via
+ * isValidSignature. EIP-712 path: the typed-data hash; personal_sign path: the EIP-191 message hash.
+ */
+export function claimDigest(form: FormData, claim: SignedClaimContext, signature: string): string {
+  return signature.includes('personal_sign_')
+    ? hashMessage(toSignatureString(form, claim))
+    : TypedDataEncoder.hash(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim));
 }

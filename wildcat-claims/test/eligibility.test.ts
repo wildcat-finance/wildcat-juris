@@ -90,15 +90,15 @@ describe('eligibleClaim (live default gate)', () => {
     expect(r.eligible).toBe(true);
   });
 
-  it('is NOT eligible when the market is not in default, even with a balance', async () => {
+  it('is eligible on non-zero holdings even when the market is not in default', async () => {
     const chain = fakeChain({
       infos: { '0xM': info('0xM') },
       states: { '0xM': state({ timeDelinquent: NOT_DEFAULTED }) },
       held: { '0xM': 100n },
     });
     const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM');
-    expect(r.inDefault).toBe(false);
-    expect(r.eligible).toBe(false);
+    expect(r.inDefault).toBe(false); // reported as context…
+    expect(r.eligible).toBe(true); // …but holdings alone gate eligibility
   });
 
   it('is NOT eligible when in default but the lender holds nothing', async () => {
@@ -131,7 +131,7 @@ describe('eligibleClaim (live default gate)', () => {
     });
     const r = await new Eligibility(chain, { ...baseCfg, debugMode: true }).eligibleClaim('0xLENDER', '0xM');
     expect(r.inDefault).toBe(false);
-    expect(r.eligible).toBe(true); // debug bypasses the in-default gate
+    expect(r.eligible).toBe(true); // debug floors holdings to >=100, so eligible
     expect(r.penalizedDays).toBe(5);
   });
 

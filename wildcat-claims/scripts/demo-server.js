@@ -106,18 +106,22 @@ app.post('/eligibility', async (req, res) => {
 });
 
 app.post('/submit', async (req, res) => {
-  const { data, signature } = req.body || {};
+  const { account: rawAccount, data, signature } = req.body || {};
   if (!data?.form || !data?.claim || typeof signature !== 'string') return res.status(400).send('Malformed submission');
   const formError = getFormDataError(data.form);
   if (formError) return res.status(400).send(formError);
   const market = asAddress(data.claim.market);
   if (!market) return res.status(400).send('Invalid market address');
-  let address;
-  try { address = verifySignature(data.form, data.claim, signature); } catch { return res.status(400).send('Invalid signature'); }
-  const result = await eligibility.eligibleClaim(address, market);
-  if (!result.eligible) return res.status(400).send(result.inDefault ? 'No eligible position' : 'Market is not in default');
+  const lender = asAddress(rawAccount);
+  if (!lender) return res.status(400).send('Invalid account address');
+  // Demo uses a mock chain (EOA signers only): verify ECDSA recovers to the lender.
+  let valid = false;
+  try { valid = verifySignature(data.form, data.claim, signature).toLowerCase() === lender.toLowerCase(); } catch {}
+  if (!valid) return res.status(400).send('Invalid signature');
+  const result = await eligibility.eligibleClaim(lender, market);
+  if (!result.eligible) return res.status(400).send('No eligible position for this address in this market');
   res.json({
-    ok: true, market, lender: address,
+    ok: true, market, lender,
     amountOwedWei: data.claim.amountOwedWei, penalizedDays: data.claim.penalizedDays,
     asOfBlock: data.claim.asOfBlock, submittedAt: new Date().toISOString(), debug: cfg.debugMode,
   });
@@ -133,13 +137,13 @@ async function signedSubmission() {
   const wallet = Wallet.createRandom();
   const market = '0x1111111111111111111111111111111111111111';
   const result = await eligibility.eligibleClaim(wallet.address, market);
-  const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true, willingToLitigate: true };
+  const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true };
   const claim = {
     network: 'mainnet', market: getAddress(market),
     penalizedDays: result.penalizedDays, amountOwedWei: result.amountOwedWei, asOfBlock: result.asOfBlock,
   };
   const sig = await wallet.signMessage(toSignatureString(form, claim));
-  return { data: { form, claim }, signature: 'personal_sign_' + sig };
+  return { account: wallet.address, data: { form, claim }, signature: 'personal_sign_' + sig };
 }
 
 const PORT = Number(process.env.PORT || 3001);

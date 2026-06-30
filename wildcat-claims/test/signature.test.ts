@@ -18,7 +18,6 @@ const form: FormData = {
   other: '',
   country: 'US',
   acceptTerms: true,
-  willingToLitigate: true,
 };
 
 const claim: SignedClaimContext = {
@@ -33,10 +32,7 @@ const claim: SignedClaimContext = {
 const typedValue = (f: FormData, c: SignedClaimContext) => ({
   contactInfo: { name: f.name, email: f.email, other: f.other },
   location: { country: f.country },
-  options: {
-    acceptTerms: f.acceptTerms,
-    willingToLitigate: f.willingToLitigate,
-  },
+  options: { acceptTerms: f.acceptTerms },
   claim: {
     network: c.network,
     market: c.market,

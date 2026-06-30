@@ -5,10 +5,10 @@ retargeted from the Indexed Finance exploit to live Wildcat protocol state.
 
 A claim is one **lender** against one **market**. The lender finds the affected market via
 its **borrower** (the borrower's markets are enumerated on-chain), connects the wallet they
-lent with, and — if the market is in default and they still hold a position — signs a claim
-form (contact, country, consent to participate in litigation). The server verifies the
-signature and returns a copyable proof (the signed payload plus the verification details);
-nothing is persisted yet (export/email is future work).
+lent with, and — if they still hold a position in it — signs a short claim form (contact +
+country, confirming they're an impacted lender). The server verifies the signature and returns
+a copyable proof (the signed payload plus the verification details); nothing is persisted yet
+(export/email is future work).
 
 The lender submits this proof to the **Wildcat Foundation** as evidence that they are an
 impacted lender, in order to receive the (non-public) borrower information needed to pursue a
@@ -30,10 +30,10 @@ impacted lender, in order to receive the (non-public) borrower information neede
         config.ts                   network + addresses + DEFAULT_BUFFER_DAYS + optional BORROWER_ADDRESS
         abis.ts                     ABI fragments (ArchController, V2 market, ERC20, MarketLensV2)
         chain.ts                    market enumeration, borrower filter, live state, lender reads
-        eligibility.ts              default gate + getBorrowerMarkets() + eligibleClaim()
+        eligibility.ts              getBorrowerMarkets() + eligibleClaim() (holdings gate)
       utils.ts                      form validation (country-level) + signature + EIP-712 types
     app-build/index.html            self-contained frontend (ethers + country-state-city via CDN)
-    test/                           eligibility (default gate, owed math, discovery) + signature round-trips
+    test/                           eligibility (holdings gate, owed math, discovery) + signature round-trips
 ```
 
 The application lives entirely under `wildcat-claims/`; the Markdown files at the root are
@@ -50,8 +50,9 @@ design docs.
 - **Eligibility** — for the selected market, the lender's owed amount is their held balance
   (`MarketLensV2.getLenderAccountData(...).normalizedBalance`, or `market.balanceOf` in
   direct mode) plus, when enabled, their share of queued/expired withdrawal batches
-  (`MarketLensV2` `normalizedAmountOwed`). Eligible = market in default **and** owed non-dust.
-  All markets are assumed to be Wildcat V2.
+  (`MarketLensV2` `normalizedAmountOwed`). **Eligible = non-zero holdings** (owed non-dust) —
+  any lender with a position is an impacted lender; the market's default status is reported as
+  context but does not gate eligibility. All markets are assumed to be Wildcat V2.
 - **Proof** — an EIP-712 / personal_sign signature commits to
   `{ network, market, penalizedDays, amountOwedWei, asOfBlock }`: it binds the market, how
   much is owed, and the block the figures were read at, so anyone can replay that block on an
@@ -107,10 +108,9 @@ the deployed function can reach your `RPC_URL`, and `DEBUG_MODE` must stay off i
   type against the on-chain ABIs. Note the deployed V2 `currentState()` has 13 fields
   (no `protocolFeeBips`) — the SDK typechain's `MarketStateV2Struct` is wrong; the on-chain
   shape is used here. What remains unconfirmed is live *data* behaviour, not the ABIs.
-- **`DEBUG_MODE`** (testing only) assumes any lender holds ≥100 of the underlying and relaxes
-  the in-default gate, so the signing flow can be exercised without a real position.
-  Signatures are still verified. **Never enable it in production** — the proof will (honestly)
-  report that the held amount was assumed.
+- **`DEBUG_MODE`** (testing only) assumes any lender holds ≥100 of the underlying, so the
+  signing flow can be exercised without a real position. Signatures are still verified.
+  **Never enable it in production** — the proof will (honestly) report the holdings were assumed.
 - **V2 only** — assumes V2 markets (per Wildcat). V1 markets would need the V1 lens and
   market wrappers.
 - **Default definition** is the interim `grace + 90 days` rule, read live — no historical

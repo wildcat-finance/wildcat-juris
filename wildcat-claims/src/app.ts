@@ -10,6 +10,7 @@ import { Eligibility } from './wildcat/eligibility';
 import {
   getFormDataError,
   verifySignature,
+  claimDigest,
   chainIdFor,
   domainFor,
   type SubmitData,
@@ -118,7 +119,11 @@ export function createApp(): Express {
 
   // Submit a signed claim: verify, re-check eligibility live, return a copyable proof.
   app.post('/submit', async (req: Request, res: Response) => {
-    const { data, signature } = (req.body ?? {}) as { data?: SubmitData; signature?: string };
+    const { account: rawAccount, data, signature } = (req.body ?? {}) as {
+      account?: string;
+      data?: SubmitData;
+      signature?: string;
+    };
     if (!data?.form || !data?.claim || typeof signature !== 'string') {
       return res.status(400).send('Malformed submission');
     }
@@ -129,37 +134,41 @@ export function createApp(): Express {
     if (data.claim.network !== cfg.network) return res.status(409).send('Wrong network');
     const market = asAddress(data.claim.market);
     if (!market) return res.status(400).send('Invalid market address');
+    const lender = asAddress(rawAccount);
+    if (!lender) return res.status(400).send('Invalid account address');
 
-    // Recover signer.
-    let address: string;
+    // Verify the signature authorizes `lender`. EOAs are checked by ECDSA recovery; smart-
+    // contract wallets (e.g. a Safe multisig) are checked via EIP-1271 isValidSignature. Either
+    // way the signature proves control of `lender` — we never trust a bare client-supplied address.
+    let valid = false;
     try {
-      address = verifySignature(data.form, data.claim, signature);
+      if (await chain.isContract(lender)) {
+        valid = await chain.isValidErc1271(lender, claimDigest(data.form, data.claim, signature), signature);
+      } else {
+        valid = verifySignature(data.form, data.claim, signature).toLowerCase() === lender.toLowerCase();
+      }
     } catch {
-      return res.status(400).send('Invalid signature');
+      valid = false;
     }
+    if (!valid) return res.status(400).send('Invalid signature');
 
     // Server-side re-check (live): never trust client-supplied eligibility.
     let result;
     try {
-      result = await eligibility.eligibleClaim(address, market);
+      result = await eligibility.eligibleClaim(lender, market);
     } catch (err: any) {
       console.error('/submit eligibility check:', err.message);
       return res.status(500).send('Failed to verify eligibility');
     }
     if (!result.eligible) {
-      // In debug mode the in-default requirement is relaxed, so distinguish the reason.
-      const reason =
-        !cfg.debugMode && !result.inDefault
-          ? 'Market is not in default'
-          : 'No eligible position for this address in this market';
-      return res.status(400).send(reason);
+      return res.status(400).send('No eligible position for this address in this market');
     }
 
     // No persistence: the signed claim is verified and returned as a copyable proof.
     return res.json({
       ok: true,
       market,
-      lender: address,
+      lender,
       amountOwedWei: data.claim.amountOwedWei,
       penalizedDays: data.claim.penalizedDays,
       asOfBlock: data.claim.asOfBlock,
@@ -167,6 +176,24 @@ export function createApp(): Express {
       debug: cfg.debugMode,
     });
   });
+
+  // Safe App manifest + icon — lets Safe{Wallet} load this as a Custom App so a Safe lender
+  // can open it from inside their Safe and sign with their owners (EIP-1271).
+  app.get('/manifest.json', (_req, res) =>
+    res.json({
+      name: 'Wildcat Lender Claim',
+      description:
+        'Prove you are an impacted lender in a defaulted Wildcat market and generate a signed eligibility proof for the Wildcat Foundation.',
+      iconPath: 'icon.svg',
+    })
+  );
+  app.get('/icon.svg', (_req, res) =>
+    res
+      .type('image/svg+xml')
+      .send(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0e0f13"/><text x="32" y="44" font-family="system-ui,sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#f0b429">W</text></svg>'
+      )
+  );
 
   // Single-page frontend for everything else (the page is one self-contained HTML file).
   const indexHtml = loadIndexHtml();

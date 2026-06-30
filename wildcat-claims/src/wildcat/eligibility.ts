@@ -118,9 +118,10 @@ export class Eligibility {
 
     const owed = heldWei + withdrawalsWei;
     const summary = this.summary(info, state);
-    // Normally a market must be in default; DEBUG_MODE relaxes that so the signing flow
-    // can be exercised against a not-yet-defaulted (but penalized-delinquent) market.
-    const eligible = (summary.inDefault || this.cfg.debugMode) && owed > this.cfg.minOwedWei;
+    // Non-zero holdings are a sufficient gate: anyone with a position is an impacted lender
+    // and is entitled to the data. Default status (inDefault/penalizedDays) is reported as
+    // context but does not gate eligibility. (DEBUG_MODE still floors holdings for testing.)
+    const eligible = owed > this.cfg.minOwedWei;
 
     return {
       ...summary,

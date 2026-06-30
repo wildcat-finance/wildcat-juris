@@ -74,6 +74,30 @@ export class Chain {
     return this.cfg.snapshotBlock ?? this.provider.getBlockNumber();
   }
 
+  /** True if the address has contract code (i.e. a smart-contract wallet such as a Safe). */
+  async isContract(address: string): Promise<boolean> {
+    return (await this.provider.getCode(address)) !== '0x';
+  }
+
+  /**
+   * EIP-1271: ask a smart-contract wallet whether `signature` authorizes `digest`. A Safe
+   * returns the magic value 0x1626ba7e once its owner threshold has signed. This is how
+   * Safe (and other contract wallets) "sign" — they have no ECDSA key to recover.
+   */
+  async isValidErc1271(signer: string, digest: string, signature: string): Promise<boolean> {
+    const wallet = new Contract(
+      signer,
+      ['function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)'],
+      this.provider
+    );
+    try {
+      const magic: string = await wallet.isValidSignature(digest, signature);
+      return typeof magic === 'string' && magic.toLowerCase() === '0x1626ba7e';
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Every market registered on the arch-controller. Uses the no-arg
    * getRegisteredMarkets() (one call, selector 0x46762101); falls back to the
