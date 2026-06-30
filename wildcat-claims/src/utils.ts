@@ -1,5 +1,12 @@
 import { Country } from 'country-state-city';
-import { verifyMessage, verifyTypedData, getAddress, type TypedDataDomain } from 'ethers';
+import {
+  verifyMessage,
+  verifyTypedData,
+  getAddress,
+  hashMessage,
+  TypedDataEncoder,
+  type TypedDataDomain,
+} from 'ethers';
 
 // ========================================================================== //
 //                                   Types                                    //
@@ -137,7 +144,7 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `asOfBlock: ${claim.asOfBlock}`,
   ].join('\n');
 
-/** Recover the signer address from an EIP-712 or personal_sign signature. */
+/** Recover the signer address from an EIP-712 or personal_sign signature (EOA / ECDSA). */
 export function verifySignature(
   form: FormData,
   claim: SignedClaimContext,
@@ -147,4 +154,14 @@ export function verifySignature(
     return verifyMessage(toSignatureString(form, claim), signature.replace('personal_sign_', ''));
   }
   return verifyTypedData(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim), signature);
+}
+
+/**
+ * The 32-byte digest the lender signed — the value an EIP-1271 wallet (e.g. a Safe) checks via
+ * isValidSignature. EIP-712 path: the typed-data hash; personal_sign path: the EIP-191 message hash.
+ */
+export function claimDigest(form: FormData, claim: SignedClaimContext, signature: string): string {
+  return signature.includes('personal_sign_')
+    ? hashMessage(toSignatureString(form, claim))
+    : TypedDataEncoder.hash(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim));
 }
