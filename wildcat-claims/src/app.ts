@@ -147,12 +147,7 @@ export function createApp(): Express {
       return res.status(500).send('Failed to verify eligibility');
     }
     if (!result.eligible) {
-      // In debug mode the in-default requirement is relaxed, so distinguish the reason.
-      const reason =
-        !cfg.debugMode && !result.inDefault
-          ? 'Market is not in default'
-          : 'No eligible position for this address in this market';
-      return res.status(400).send(reason);
+      return res.status(400).send('No eligible position for this address in this market');
     }
 
     // No persistence: the signed claim is verified and returned as a copyable proof.

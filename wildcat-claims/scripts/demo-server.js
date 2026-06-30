@@ -133,7 +133,7 @@ async function signedSubmission() {
   const wallet = Wallet.createRandom();
   const market = '0x1111111111111111111111111111111111111111';
   const result = await eligibility.eligibleClaim(wallet.address, market);
-  const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true, willingToLitigate: true };
+  const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true };
   const claim = {
     network: 'mainnet', market: getAddress(market),
     penalizedDays: result.penalizedDays, amountOwedWei: result.amountOwedWei, asOfBlock: result.asOfBlock,

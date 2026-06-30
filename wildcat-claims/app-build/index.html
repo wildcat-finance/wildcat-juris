@@ -107,7 +107,6 @@
         <label>Country *</label>
         <select id="country"></select>
 
-        <label class="check"><input type="checkbox" id="willingToLitigate" /><span>I am willing to participate in litigation to recover funds. *</span></label>
         <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and intend to submit this proof to the Wildcat Foundation as evidence of my eligibility as an impacted lender. *</span></label>
 
         <button id="submitBtn">Sign &amp; submit claim</button>
@@ -215,8 +214,7 @@
         selectedMarket = $("market").value || null;
         const m = markets.find((x) => x.market === selectedMarket);
         $("marketHint").innerHTML = m
-          ? `Borrower ${m.borrower.slice(0, 10)}… · delinquent ${fmtDays(delinquentDaysOf(m))}d, ` +
-            `${badgeHtml(m)}${m.inDefault ? "" : " — claims open at default"}`
+          ? `Borrower ${m.borrower.slice(0, 10)}… · delinquent ${fmtDays(delinquentDaysOf(m))}d, ${badgeHtml(m)}`
           : "";
         // Reset downstream steps when the market changes.
         elig = null; hide($("eligCard")); hide($("formCard"));
@@ -274,10 +272,7 @@
         const owed = Number(formatUnits(elig.amountOwedWei, elig.assetDecimals));
         const defPill = badgeHtml(elig);
         if (!elig.eligible) {
-          const why = !elig.inDefault
-            ? `This market has been in penalized delinquency for ${fmtDays(penalizedDaysOf(elig))} day(s); ` +
-              `claims open once it reaches ${cfg.defaultBufferDays} days (default).`
-            : "This address holds no position in this market.";
+          const why = "This address holds no position in this market.";
           $("eligBody").innerHTML = `<div class="meta">
               <dt>Market</dt><dd>${elig.name} ${defPill}</dd>
               <dt>Your position</dt><dd>${owed.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${elig.assetSymbol}</dd>
@@ -308,12 +303,10 @@
           other: $("other").value.trim(),
           country: $("country").value,
           acceptTerms: $("acceptTerms").checked,
-          willingToLitigate: $("willingToLitigate").checked,
         };
         if (!form.name) return setStatus($("submitStatus"), "Please enter your name.", "err");
         if (!form.email && !form.other) return setStatus($("submitStatus"), "Provide an email or other contact.", "err");
         if (!form.country) return setStatus($("submitStatus"), "Please select a country.", "err");
-        if (!form.willingToLitigate) return setStatus($("submitStatus"), "You must consent to participate in litigation.", "err");
         if (!form.acceptTerms) return setStatus($("submitStatus"), "You must confirm the consent checkbox.", "err");
 
         const btn = $("submitBtn");
@@ -325,7 +318,7 @@
           const types = {
             Contact: [ { name: "name", type: "string" }, { name: "email", type: "string" }, { name: "other", type: "string" } ],
             Location: [ { name: "country", type: "string" } ],
-            Options: [ { name: "acceptTerms", type: "bool" }, { name: "willingToLitigate", type: "bool" } ],
+            Options: [ { name: "acceptTerms", type: "bool" } ],
             Claim: [
               { name: "network", type: "string" },
               { name: "market", type: "address" },
@@ -338,7 +331,7 @@
           const value = {
             contactInfo: { name: form.name, email: form.email || "", other: form.other || "" },
             location: { country: form.country },
-            options: { acceptTerms: form.acceptTerms, willingToLitigate: form.willingToLitigate },
+            options: { acceptTerms: form.acceptTerms },
             claim: elig.claim,
           };
           const signature = await signer.signTypedData(cfg.domain, types, value);
