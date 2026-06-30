@@ -70,7 +70,7 @@ design docs.
 ```bash
 cd wildcat-claims
 npm install
-cp .env.example .env      # set RPC_URL; optionally BORROWER_ADDRESS, DEFAULT_BUFFER_DAYS, DEBUG_MODE
+cp .env.example .env      # RPC_URL defaults to the Wildcat archive node; optionally set BORROWER_ADDRESS, DEFAULT_BUFFER_DAYS
 npm run typecheck
 npm test
 npm run dev               # ts-node, http on :3001 (serves app-build/)

@@ -15,27 +15,23 @@ serverless function**:
 So there's nothing to "build" beyond installing dependencies — the function is TypeScript
 (Vercel transpiles it) and the frontend is a committed static file the function serves.
 
-## ⚠️ The one prerequisite that decides everything: RPC reachability
+## RPC: the Wildcat archive node is integrated by default
 
-The function runs in Vercel's cloud, so **it must be able to reach your Ethereum RPC**. The
-internal archive node is only reachable from inside Wildcat's network, so a public Vercel
-function very likely **cannot** reach it. Before deploying, choose one:
+The app defaults to the Wildcat mainnet archive node (`https://eth-main.hinterlight.net/`,
+baked into `src/wildcat/config.ts`), so the hosted deployment works without setting `RPC_URL`.
+You can still override it by setting `RPC_URL` in the Vercel environment.
 
-1. **A publicly-reachable archive RPC** (e.g. an Alchemy/Infura mainnet archive endpoint, or
-   the internal node exposed through an allowlisted gateway). Set it as `RPC_URL`. — Simplest.
-2. **Keep the API inside your network** (deploy the Express app on an internal host that can
-   reach the node) and use Vercel only for the static page, proxying API calls to that host.
-   In that case you don't need the serverless function at all.
-
-If `RPC_URL` isn't reachable from Vercel, `/markets` and `/eligibility` will time out or error
-even though the page loads. Confirm this first.
+The one thing to verify: the function runs in Vercel's cloud, so **that node must be reachable
+from Vercel's egress**. If it's network-restricted, either allowlist Vercel or set `RPC_URL` to
+a publicly-reachable archive endpoint. If the RPC isn't reachable, the page still loads but
+`/markets` and `/eligibility` will time out.
 
 ## Prerequisites
 
 - The repo pushed to GitHub (`wildcat-finance/wildcat-juris`).
 - Access to the Wildcat Vercel team.
-- An `RPC_URL` the function can reach (see above). An **archive** node is only needed if you
-  pin reads with `SNAPSHOT_BLOCK`; the default live reads work against a normal full node.
+- The default RPC (Wildcat archive node) must be reachable from Vercel, or override `RPC_URL`.
+  An archive node is only strictly needed if you pin reads with `SNAPSHOT_BLOCK`.
 
 ## Deploy
 
@@ -44,8 +40,9 @@ even though the page loads. Confirm this first.
    `vercel.json` / `api/` are there). This is the most important setting.
 3. **Framework Preset:** Other. Leave Build Command and Output Directory empty/default —
    Vercel installs dependencies and builds the function automatically.
-4. **Environment Variables** (Settings → Environment Variables) — see the table below. At
-   minimum set `RPC_URL`. **Leave `DEBUG_MODE` unset (or `false`).**
+4. **Environment Variables** (Settings → Environment Variables) — see the table below. None
+   are strictly required (the RPC defaults to the Wildcat archive node); set `BORROWER_ADDRESS`
+   if you want the field pre-filled, and **leave `DEBUG_MODE` unset (or `false`).**
 5. **Deploy.** Every push to `master` redeploys production; pull requests get preview URLs.
 
 After it's live, sanity-check:
@@ -61,7 +58,7 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `RPC_URL` | **yes** | — | Ethereum RPC the function calls. Must be reachable from Vercel. |
+| `RPC_URL` | no | Wildcat archive node | Ethereum RPC the function calls. Defaults to `eth-main.hinterlight.net`; override if needed. Must be reachable from Vercel. |
 | `WILDCAT_NETWORK` | no | `mainnet` | `mainnet` or `sepolia` (selects baked-in contract addresses + chainId). |
 | `BORROWER_ADDRESS` | no | — | Pre-fills the borrower field on the page. |
 | `DEFAULT_BUFFER_DAYS` | no | `90` | "In default" = `timeDelinquent ≥ grace + this many days`. |
@@ -121,15 +118,15 @@ node scripts/demo-server.js
 
 ## Troubleshooting
 
-- **Page loads but `/markets` times out / 500s** — the function can't reach `RPC_URL`
-  (the internal-node problem). Use a publicly-reachable RPC, or host the API in-network.
+- **Page loads but `/markets` times out / 500s** — Vercel can't reach the RPC (the Wildcat
+  archive node by default). Allowlist Vercel's egress on the node, or override `RPC_URL`.
 - **403 / "Write access" on `git push`** — that's GitHub, not Vercel (token/SSO scope).
 - **Push rejected: "Commits must have verified signatures"** — the org ruleset requires signed
   commits; sign them or relax the rule for the import (see repo notes).
 - **Function cold-start is slow** — expected for the first request; subsequent calls are warm.
   Multicall already minimizes round-trips; a faster RPC helps most.
-- **`Missing required env/config value: RPC_URL`** in function logs — set `RPC_URL` in the
-  Vercel project's Environment Variables and redeploy.
+- **`Missing required env/config value: …`** in function logs — only happens on a non-default
+  network (e.g. `sepolia` without `ARCH_CONTROLLER`); set the named contract-address env var.
 - **Wrong addresses** — they're baked in per `WILDCAT_NETWORK`; override individually with
   `ARCH_CONTROLLER` / `MARKET_LENS` / `HOOKS_FACTORY` if a deployment moves.
 ```

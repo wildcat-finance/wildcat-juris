@@ -106,7 +106,8 @@ export function loadConfig(): WildcatConfig {
   return {
     network,
     chainId: network === 'sepolia' ? 11155111 : 1,
-    rpcUrl: required('RPC_URL', process.env.RPC_URL),
+    // Defaults to the Wildcat mainnet archive node; override with the RPC_URL env var.
+    rpcUrl: process.env.RPC_URL || 'https://eth-main.hinterlight.net/',
     addresses,
     defaultBufferSec: Math.floor(bufferDays * DAY_SEC),
     borrower: process.env.BORROWER_ADDRESS ? getAddress(process.env.BORROWER_ADDRESS) : undefined,
