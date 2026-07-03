@@ -115,6 +115,9 @@ export function loadConfig(): WildcatConfig {
     includeWithdrawals: (process.env.INCLUDE_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,
-    debugMode: ['1', 'true', 'yes'].includes((process.env.DEBUG_MODE ?? '').toLowerCase()),
+    // NOTE: this build defaults DEBUG_MODE **on** — any lender is assumed to hold >=100 of the
+    // underlying in every market, so the signing flow can be exercised without a real position.
+    // Set DEBUG_MODE=false to disable. Never ship this default to production.
+    debugMode: !['0', 'false', 'no'].includes((process.env.DEBUG_MODE ?? 'true').toLowerCase()),
   };
 }
