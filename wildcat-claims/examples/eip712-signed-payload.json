@@ -1,0 +1,96 @@
+{
+  "domain": {
+    "name": "Wildcat Claims",
+    "version": "1",
+    "chainId": 1
+  },
+  "primaryType": "Data",
+  "types": {
+    "Contact": [
+      {
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "name": "email",
+        "type": "string"
+      },
+      {
+        "name": "other",
+        "type": "string"
+      }
+    ],
+    "Location": [
+      {
+        "name": "country",
+        "type": "string"
+      }
+    ],
+    "Options": [
+      {
+        "name": "acceptTerms",
+        "type": "bool"
+      }
+    ],
+    "Claim": [
+      {
+        "name": "network",
+        "type": "string"
+      },
+      {
+        "name": "market",
+        "type": "address"
+      },
+      {
+        "name": "penalizedDays",
+        "type": "uint256"
+      },
+      {
+        "name": "amountOwedWei",
+        "type": "uint256"
+      },
+      {
+        "name": "asOfBlock",
+        "type": "uint256"
+      }
+    ],
+    "Data": [
+      {
+        "name": "contactInfo",
+        "type": "Contact"
+      },
+      {
+        "name": "location",
+        "type": "Location"
+      },
+      {
+        "name": "options",
+        "type": "Options"
+      },
+      {
+        "name": "claim",
+        "type": "Claim"
+      }
+    ]
+  },
+  "message": {
+    "contactInfo": {
+      "name": "Ada Lovelace",
+      "email": "ada@example.io",
+      "other": ""
+    },
+    "location": {
+      "country": "GB"
+    },
+    "options": {
+      "acceptTerms": true
+    },
+    "claim": {
+      "network": "mainnet",
+      "market": "0x00000000000000000000000000000000000000A1",
+      "penalizedDays": 118,
+      "amountOwedWei": "250000000000",
+      "asOfBlock": 20812345
+    }
+  }
+}
