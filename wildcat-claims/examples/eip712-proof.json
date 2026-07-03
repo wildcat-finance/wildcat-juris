@@ -1,0 +1,18 @@
+{
+  "signatureType": "eip712",
+  "signer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "recoveredFromSignature": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "signatureValid": true,
+  "typedDataHash": "0x4ba2fb046946429da6ccfe72e0a4362835566f189671c6d7da9d4e9bd6854c38",
+  "signature": "0x71dd83f5a93dc42f5780657cb33aad3497a6d5e6ce79c3fee2869963a78e80d37382716a82a34bbd3200a46d1cc9ee1c3d487f9b4a5f673dcd8c8ba6f600b0781c",
+  "serverResponse": {
+    "ok": true,
+    "market": "0x00000000000000000000000000000000000000A1",
+    "lender": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "amountOwedWei": "250000000000",
+    "penalizedDays": 118,
+    "asOfBlock": 20812345,
+    "submittedAt": "2026-07-03T12:00:00.000Z",
+    "debug": false
+  }
+}

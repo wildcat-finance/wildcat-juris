@@ -1,0 +1,16 @@
+{
+  "scheme": "EIP-191 personal_sign",
+  "messageLines": [
+    "name: Ada Lovelace",
+    "email: ada@example.io",
+    "other: ",
+    "country: GB",
+    "acceptTerms: true",
+    "network: mainnet",
+    "market: 0x00000000000000000000000000000000000000A1",
+    "penalizedDays: 118",
+    "amountOwedWei: 250000000000",
+    "asOfBlock: 20812345"
+  ],
+  "message": "name: Ada Lovelace\nemail: ada@example.io\nother: \ncountry: GB\nacceptTerms: true\nnetwork: mainnet\nmarket: 0x00000000000000000000000000000000000000A1\npenalizedDays: 118\namountOwedWei: 250000000000\nasOfBlock: 20812345"
+}

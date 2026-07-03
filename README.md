@@ -33,7 +33,9 @@ impacted lender, in order to receive the (non-public) borrower information neede
         eligibility.ts              getBorrowerMarkets() + eligibleClaim() (holdings gate)
       utils.ts                      form validation (country-level) + signature + EIP-712 types
     app-build/index.html            self-contained frontend (ethers + country-state-city via CDN)
-    test/                           eligibility (holdings gate, owed math, discovery) + signature round-trips
+    examples/                       verifiable sample proofs (EIP-712 + personal_sign) + how to check them
+    scripts/                        generate-proof-examples.ts (regenerates examples/ via npm run examples)
+    test/                           eligibility (holdings gate, owed math, discovery) + signature round-trips + example proofs
 ```
 
 The application lives entirely under `wildcat-claims/`; the Markdown files at the root are
