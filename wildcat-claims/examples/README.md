@@ -59,9 +59,15 @@ the `typedDataHash` / `messageHash` in these proofs — and calls the wallet's
 
 ## Verifying these yourself
 
+For the full flow the Wildcat Foundation runs on a real proof — signature **and** on-chain
+replay at `asOfBlock` — see [`../../VERIFYING_PROOFS.md`](../../VERIFYING_PROOFS.md) (the
+"Verify a proof" panel in the app, or `npm run verify`). Note these synthetic examples use a
+placeholder market and a debug-faked amount, so they pass the signature check but not the
+on-chain check — that's expected.
+
 The committed files are re-checked by [`../test/examples.test.ts`](../test/examples.test.ts)
 (`npm test`), which recovers the signer from each proof and confirms the committed hash. Ad hoc
-with ethers:
+signature check with ethers:
 
 ```js
 const { verifyTypedData } = require('ethers');

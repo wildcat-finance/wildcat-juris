@@ -42,6 +42,18 @@
       .status.err { background: rgba(255,107,107,0.1); color: var(--err); border: 1px solid rgba(255,107,107,0.4); }
       .hidden { display: none; }
       code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+      textarea { width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+      .verify { margin-top: 8px; border: 1px dashed var(--border); border-radius: 12px; padding: 0 16px; }
+      .verify[open] { padding-bottom: 16px; }
+      .verify > summary { list-style: none; cursor: pointer; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; padding: 12px 0; user-select: none; }
+      .verify > summary::-webkit-details-marker { display: none; }
+      .verify > summary::before { content: "▸ "; color: var(--accent); }
+      .verify[open] > summary::before { content: "▾ "; }
+      .vrow { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
+      .vrow .k { color: var(--muted); } .vrow .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; word-break: break-all; }
+      .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+      .tag.pass { color: var(--ok); border: 1px solid rgba(63,191,127,0.5); }
+      .tag.fail { color: var(--err); border: 1px solid rgba(255,107,107,0.5); }
     </style>
   </head>
   <body>
@@ -120,9 +132,25 @@
           <label>Signature &amp; verification proof</label>
           <pre id="proofPre" class="code"></pre>
           <button class="copybtn" data-target="proofPre">Copy proof</button>
+          <label>Verification bundle (send this to the Wildcat Foundation)</label>
+          <pre id="bundlePre" class="code"></pre>
+          <button class="copybtn" data-target="bundlePre">Copy verification bundle</button>
+          <div class="hint">One self-contained blob (signed payload + proof). The Foundation pastes it into “Verify a proof” below to confirm your signature and replay your figures at the recorded block.</div>
           <div id="verifyNote" class="hint"></div>
         </div>
       </div>
+
+      <!-- Foundation-facing: paste a lender's proof and verify it independently. -->
+      <details class="verify" id="verifyPanel">
+        <summary>Verify a proof</summary>
+        <p class="hint" style="margin-top:0">Paste a lender's <b>verification bundle</b> (or a <code>{ payload, proof }</code> object). It re-checks the signature and replays the committed figures on-chain at the recorded block. Runs with debug forced off.</p>
+        <textarea id="verifyInput" rows="7" placeholder='{ "payload": { … }, "proof": { … } }' spellcheck="false"></textarea>
+        <div class="inline" style="margin-top:10px">
+          <button id="verifyBtn">Verify</button>
+        </div>
+        <div id="verifyStatus"></div>
+        <div id="verifyResult" class="hidden" style="margin-top:12px"></div>
+      </details>
     </div>
 
     <script type="module">
@@ -390,13 +418,18 @@
           try { recovered = verifyTypedData(cfg.domain, types, value, signature); } catch (_) {}
           $("signedPre").textContent = JSON.stringify(
             { domain: cfg.domain, primaryType: "Data", types, message: value }, null, 2);
-          $("proofPre").textContent = JSON.stringify({
+          const proofObj = {
             signer: account,
             recoveredFromSignature: recovered,
             signatureValid: !!recovered && recovered.toLowerCase() === account.toLowerCase(),
             signature,
             serverResponse: out,
-          }, null, 2);
+          };
+          $("proofPre").textContent = JSON.stringify(proofObj, null, 2);
+          // Single self-contained blob the Foundation can paste into "Verify a proof".
+          $("bundlePre").textContent = JSON.stringify(
+            { payload: { domain: cfg.domain, primaryType: "Data", types, message: value }, proof: proofObj },
+            null, 2);
           show($("receipt"));
           $("receipt").querySelectorAll(".copybtn").forEach((b) => {
             const label = b.textContent;
@@ -409,6 +442,53 @@
         } catch (e) {
           setStatus($("submitStatus"), "Submission failed: " + (e.shortMessage || e.message), "err");
           btn.disabled = false;
+        }
+      });
+
+      // ---- Foundation: verify a pasted proof ----------------------------------
+      const tag = (ok) => `<span class="tag ${ok ? "pass" : "fail"}">${ok ? "PASS" : "FAIL"}</span>`;
+      const vrow = (k, v) => `<div class="vrow"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+
+      $("verifyBtn").addEventListener("click", async () => {
+        const out = $("verifyResult");
+        hide(out);
+        let bundle;
+        try {
+          bundle = JSON.parse($("verifyInput").value);
+        } catch (_) {
+          return setStatus($("verifyStatus"), "That isn't valid JSON. Paste the whole verification bundle.", "err");
+        }
+        if (!bundle || !bundle.payload || !bundle.proof) {
+          return setStatus($("verifyStatus"), "Expected an object with { payload, proof }.", "err");
+        }
+        setStatus($("verifyStatus"), "Verifying — recovering the signature and replaying the block…", "");
+        $("verifyBtn").disabled = true;
+        try {
+          const res = await fetch("/verify", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bundle),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          const r = await res.json();
+          setStatus($("verifyStatus"), "", "");
+
+          const o = r.onchain;
+          const amt = o.read ? `${o.amountOwedWei.chain ?? "—"} ${tag(o.amountOwedWei.match)}` : "read failed";
+          const days = o.read ? `${o.penalizedDays.chain ?? "—"} ${tag(o.penalizedDays.match)}` : "read failed";
+          out.innerHTML =
+            `<div class="status ${r.verified ? "ok" : "err"}">${r.verified ? "✓ VERIFIED" : "✗ NOT VERIFIED"} — ` +
+              `${esc(r.claimed)} ${r.verified ? "is a proven impacted lender in this market." : "could not be fully verified."}</div>` +
+            (r.debug ? `<div class="status err">⚠ This proof was produced in DEBUG mode — its figures were assumed, not real, so the on-chain check will not reconcile.</div>` : "") +
+            vrow("Signature authenticity", `${esc(r.signature.method)} ${tag(r.signature.valid)}`) +
+            vrow("Market", esc(r.claim.market)) +
+            vrow("As of block", esc(r.claim.asOfBlock)) +
+            vrow("Amount owed (wei) — on-chain", amt) +
+            vrow("Penalized days — on-chain", days) +
+            (o.error ? vrow("On-chain read error", esc(o.error)) : "");
+          show(out);
+        } catch (e) {
+          setStatus($("verifyStatus"), "Verification failed: " + (e.message || e), "err");
+        } finally {
+          $("verifyBtn").disabled = false;
         }
       });
 

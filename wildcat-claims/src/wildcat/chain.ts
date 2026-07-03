@@ -74,9 +74,14 @@ export class Chain {
     return this.cfg.snapshotBlock ?? this.provider.getBlockNumber();
   }
 
-  /** True if the address has contract code (i.e. a smart-contract wallet such as a Safe). */
+  /**
+   * True if the address has contract code (i.e. a smart-contract wallet such as a Safe) at the
+   * configured block. Reads at `blockTag()` — for live submits that's 'latest'; when verifying a
+   * past proof (snapshotBlock = asOfBlock) it must read at that block, because a Safe may not have
+   * existed yet, and an EOA may carry an EIP-7702 delegation only at some later block.
+   */
   async isContract(address: string): Promise<boolean> {
-    return (await this.provider.getCode(address)) !== '0x';
+    return (await this.provider.getCode(address, this.blockTag())) !== '0x';
   }
 
   /**
@@ -91,7 +96,9 @@ export class Chain {
       this.provider
     );
     try {
-      const magic: string = await wallet.isValidSignature(digest, signature);
+      // Evaluate at blockTag() so a past proof is checked against the wallet's owners/threshold
+      // as they were at asOfBlock, not as they are now.
+      const magic: string = await wallet.isValidSignature(digest, signature, { blockTag: this.blockTag() });
       return typeof magic === 'string' && magic.toLowerCase() === '0x1626ba7e';
     } catch {
       return false;

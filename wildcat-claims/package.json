@@ -10,7 +10,8 @@
     "dev": "ts-node src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "examples": "ts-node scripts/generate-proof-examples.ts"
+    "examples": "ts-node scripts/generate-proof-examples.ts",
+    "verify": "ts-node scripts/verify-proof.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

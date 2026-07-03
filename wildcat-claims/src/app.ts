@@ -15,6 +15,7 @@ import {
   domainFor,
   type SubmitData,
 } from './utils';
+import { verifyProof, NetworkMismatchError, type ProofBundle } from './verify';
 
 function asAddress(v: unknown): string | null {
   try {
@@ -175,6 +176,24 @@ export function createApp(): Express {
       submittedAt: new Date().toISOString(),
       debug: cfg.debugMode,
     });
+  });
+
+  // Independently verify a proof (the flow the Foundation runs on a received proof). Re-checks the
+  // signature and replays the committed figures at the claim's block; DEBUG is forced off inside
+  // verifyProof, so this is meaningful even on a debug deployment. Reads nothing client-supplied
+  // as trusted — the address is taken from the signature/receipt and re-derived on chain.
+  app.post('/verify', async (req: Request, res: Response) => {
+    const bundle = (req.body ?? {}) as Partial<ProofBundle>;
+    if (!bundle.payload?.message || typeof bundle.proof?.signature !== 'string') {
+      return res.status(400).send('Malformed proof bundle — expected { payload, proof }.');
+    }
+    try {
+      return res.json(await verifyProof(bundle as ProofBundle, cfg));
+    } catch (err: any) {
+      if (err instanceof NetworkMismatchError) return res.status(409).send(err.message);
+      console.error('/verify:', err.message);
+      return res.status(400).send('Could not verify proof');
+    }
   });
 
   // Safe App manifest + icon — lets Safe{Wallet} load this as a Custom App so a Safe lender

@@ -32,10 +32,11 @@ impacted lender, in order to receive the (non-public) borrower information neede
         chain.ts                    market enumeration, borrower filter, live state, lender reads
         eligibility.ts              getBorrowerMarkets() + eligibleClaim() (holdings gate)
       utils.ts                      form validation (country-level) + signature + EIP-712 types
+      verify.ts                     independent proof verification (signature + on-chain replay at asOfBlock)
     app-build/index.html            self-contained frontend (ethers + country-state-city via CDN)
     examples/                       verifiable sample proofs (EIP-712 + personal_sign) + how to check them
-    scripts/                        generate-proof-examples.ts (regenerates examples/ via npm run examples)
-    test/                           eligibility (holdings gate, owed math, discovery) + signature round-trips + example proofs
+    scripts/                        generate-proof-examples.ts (npm run examples) + verify-proof.ts (npm run verify)
+    test/                           eligibility (holdings gate, owed math, discovery) + signature round-trips + example/verify checks
 ```
 
 The application lives entirely under `wildcat-claims/`; the Markdown files at the root are
@@ -67,6 +68,7 @@ design docs.
 - `POST /markets` — `{ borrower }` → that borrower's markets with names + live `inDefault`.
 - `POST /eligibility` — `{ account, market }` → owed amount, default status, and the claim context to sign.
 - `POST /submit` — `{ data: { form, claim }, signature }` → re-verifies the signature + eligibility and returns a copyable proof.
+- `POST /verify` — `{ payload, proof }` → independently re-checks a received proof: recovers the signature and replays the committed figures at `asOfBlock` (debug forced off). Used by the "Verify a proof" panel at the bottom of the page and by `npm run verify`. See [`VERIFYING_PROOFS.md`](VERIFYING_PROOFS.md).
 
 ## Setup
 
