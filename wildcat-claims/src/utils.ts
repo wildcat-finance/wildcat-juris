@@ -146,6 +146,24 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `asOfBlock: ${claim.asOfBlock}`,
   ].join('\n');
 
+/**
+ * Recover the signer of an EIP-712 payload straight from its own JSON — the exact
+ * `{ domain, types, message }` shape emitted in the downloadable "signed-message.json",
+ * plus the detached `signature`. `EIP712Domain`, if present in `types`, is stripped
+ * (ethers derives it from `domain`). Pure cryptography: no chain access, and the caller
+ * is not trusted to have told the truth about who signed — the address is recovered.
+ */
+export function recoverTypedSigner(
+  domain: TypedDataDomain,
+  types: Record<string, Array<{ name: string; type: string }>>,
+  message: Record<string, unknown>,
+  signature: string
+): string {
+  const t: Record<string, Array<{ name: string; type: string }>> = { ...types };
+  delete t.EIP712Domain;
+  return verifyTypedData(domain, t, message, signature);
+}
+
 /** Recover the signer address from an EIP-712 or personal_sign signature. */
 export function verifySignature(
   form: FormData,

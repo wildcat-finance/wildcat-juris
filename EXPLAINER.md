@@ -125,3 +125,69 @@ Things that are exploit-specific and will need to change for a Wildcat version:
 - **Operational hygiene to fix on adaptation:** the import-time side effects (auto-connecting to Sheets, the test `affectedTokens` call at the bottom of `balance-check.ts`) should be removed/guarded; error handling on `/submit` swallows DB/sheet failures (logs but returns 200); and secrets are read from JSON/`.env` in a way you'll likely want to standardize.
 
 Overall it's a compact, single-purpose service: **prove you owned affected tokens at a fixed block via a wallet signature, then collect your claim into a sheet.** The reusable skeleton for Wildcat is the Express + signature-verification + LevelDB + Sheets pipeline; the on-chain "who was affected and by how much" piece is the part that's specific to the original incident.
+
+---
+
+# Wildcat fork addition — proof bundling & Foundation verification
+
+> Everything above describes the **original juris.ndx.fi** design. This section documents a
+> capability added in the Wildcat fork (`wildcat-claims/`) and has no counterpart upstream.
+> The Wildcat service does **not** persist submissions — the lender's output is a self-contained,
+> independently-verifiable **proof**, which the Wildcat Foundation later checks.
+
+## The proof, as two JSON files
+
+A completed submission produces two artifacts, shown on the receipt and downloadable together as
+one `.zip` (built client-side with `fflate`; the archive also carries a `README.txt` naming each
+file):
+
+- **`signed-message.json`** — the exact EIP-712 payload that was signed: `{ domain, primaryType,
+  types, message }`. The `message` holds the contact/consent fields and the on-chain **claim**
+  (`network, market, penalizedDays, amountOwedWei, asOfBlock`).
+- **`proof.json`** — the detached `signature`, the `signer` address, and the server's receipt.
+  The signature over `signed-message.json` recovers to `signer`.
+
+## The `/verify` endpoint (`wildcat-claims/src/app.ts`)
+
+`POST /verify` takes `{ signed, proof }` (the two files, unzipped in the browser) and checks three
+independent layers. It is **stateless** and does not trust the submitter — every claim is
+re-derived:
+
+1. **Signature** — `recoverTypedSigner()` (`src/utils.ts`) recovers the signer from
+   `signed-message.json` + the signature alone, via `ethers.verifyTypedData` (`EIP712Domain` is
+   stripped so ethers derives it from `domain`). Pure cryptography — no chain access. A forged or
+   post-hoc-edited payload will not recover to the claimed signer.
+2. **Domain binding** — the signature must be bound to this deployment's EIP-712 domain
+   (`Wildcat Claims` v1) on the correct `chainId`. This prevents a signature made for another app
+   or chain from being replayed here.
+3. **On-chain replay** — `Eligibility.verifyClaimAtBlock(signer, market, asOfBlock)`
+   (`src/wildcat/eligibility.ts`) re-reads the market state and the signer's owed balance
+   **pinned to the committed `asOfBlock`** on the archive node (`RPC_URL`), and confirms the
+   market was in penalized default and that `penalizedDays` / `amountOwedWei` match what was
+   signed. Because `currentState()` derives `timeDelinquent` from the block's own timestamp, an
+   `eth_call` at `asOfBlock` reproduces the exact figures deterministically — anyone with an
+   archive node reads back identical numbers.
+
+   Crucially this is an **honest** read: unlike `eligibleClaim()`, it never applies the
+   `DEBUG_MODE` holdings fudge, so amounts compare byte-for-byte against the attestation.
+
+The response carries a verdict: `valid` (signature + domain + on-chain all confirmed),
+`signature-valid` (crypto good but the replay could not be completed — e.g. RPC unreachable),
+`mismatch` (authentic signature, but committed figures no longer match chain — a doctored payload
+or a `DEBUG_MODE`-produced proof), or `invalid` (signature did not recover or is not bound to this
+deployment).
+
+## Block-pinned reads (`wildcat-claims/src/wildcat/chain.ts`)
+
+To support layer 3, `getMarketInfo` / `getMarketState` / `readLenderHeld` / `readWithdrawalsOwed`
+take an optional `blockTag` (default: configured snapshot or `latest`). Verification passes the
+historical `asOfBlock`; live eligibility keeps its existing behaviour unchanged.
+
+## Frontend
+
+The receipt gains a **"Download both as .zip"** button, and a collapsible **"Foundation · verify a
+submitted proof"** section below it (`wildcat-claims/app-build/index.html`). The Foundation pastes
+the two JSON blobs or uploads the `.zip`/`.json` files (unzipped and auto-classified client-side),
+clicks **Verify**, and sees the layered verdict. The section also carries a plain-language
+explainer of *what* is checked, *how* (crypto recovery + deterministic block replay, no trust in
+the applicant), and *what a valid/mismatch result means*.

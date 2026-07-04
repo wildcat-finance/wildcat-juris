@@ -147,6 +147,33 @@ describe('eligibleClaim (live default gate)', () => {
   });
 });
 
+describe('verifyClaimAtBlock (independent re-derivation)', () => {
+  it('re-derives the committed figures pinned to the given block', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 30n },
+      withdrawals: { '0xM': 20n },
+    });
+    const r = await new Eligibility(chain, baseCfg).verifyClaimAtBlock('0xLENDER', '0xM', 777);
+    expect(r.asOfBlock).toBe(777);
+    expect(r.amountOwedWei).toBe('50');
+    expect(r.inDefault).toBe(true);
+  });
+
+  it('is an HONEST read: the DEBUG holdings fudge is never applied', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 0n }, // holds nothing on-chain
+    });
+    // eligibleClaim under DEBUG would floor this to 100 underlying; verifyClaimAtBlock must not.
+    const r = await new Eligibility(chain, { ...baseCfg, debugMode: true }).verifyClaimAtBlock('0xLENDER', '0xM', 100);
+    expect(r.amountOwedWei).toBe('0');
+    expect(r.eligible).toBe(false);
+  });
+});
+
 describe('getBorrowerMarkets', () => {
   it('filters the registry by borrower() (case-insensitive), flags default, defaulted first', async () => {
     const infos = {

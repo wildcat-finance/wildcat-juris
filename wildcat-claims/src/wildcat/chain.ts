@@ -174,14 +174,18 @@ export class Chain {
     });
   }
 
-  /** Immutable market identity (borrower, name, asset, token metadata). Cached. */
-  async getMarketInfo(market: string): Promise<MarketInfo> {
+  /**
+   * Immutable market identity (borrower, name, asset, token metadata). Cached.
+   * `blockTag` defaults to the configured snapshot/'latest'; verification passes a
+   * historical block, which is safe to cache since identity is immutable.
+   */
+  async getMarketInfo(market: string, blockTag: BlockTag = this.blockTag()): Promise<MarketInfo> {
     const key = market.toLowerCase();
     const cached = this.infoCache.get(key);
     if (cached) return cached;
 
     const m = this.market(market);
-    const tag = { blockTag: this.blockTag() };
+    const tag = { blockTag };
     const [borrower, name, asset] = await Promise.all([m.borrower(tag), m.name(tag), m.asset(tag)]);
     const token = new Contract(asset, ERC20_ABI, this.provider);
     const [symbol, decimals] = await Promise.all([token.symbol(tag), token.decimals(tag)]);
@@ -198,10 +202,10 @@ export class Chain {
     return info;
   }
 
-  /** Live delinquency state (verified currentState path). */
-  async getMarketState(market: string): Promise<MarketState> {
+  /** Delinquency state via the verified currentState path, pinned to `blockTag` (default live). */
+  async getMarketState(market: string, blockTag: BlockTag = this.blockTag()): Promise<MarketState> {
     const m = this.market(market);
-    const tag = { blockTag: this.blockTag() };
+    const tag = { blockTag };
     const [state, grace] = await Promise.all([m.currentState(tag), m.delinquencyGracePeriod(tag)]);
     return {
       isClosed: state.isClosed,
@@ -216,8 +220,11 @@ export class Chain {
    * MarketLensV2.getLenderAccountData; a decode/call failure auto-falls-back to the
    * market's balanceOf. With LENS_MODE=direct, balanceOf is used directly.
    */
-  async readLenderHeld(market: string, lender: string): Promise<bigint> {
-    const tag = this.blockTag();
+  async readLenderHeld(
+    market: string,
+    lender: string,
+    tag: BlockTag = this.blockTag()
+  ): Promise<bigint> {
     if (this.cfg.lensMode === 'lens') {
       try {
         const data = await this.lens.getLenderAccountData(lender, market, { blockTag: tag });
@@ -238,8 +245,11 @@ export class Chain {
    * Authoritative: sums MarketLensV2 WithdrawalBatchLenderStatus.normalizedAmountOwed
    * across the market's unpaid batches.
    */
-  async readWithdrawalsOwed(market: string, lender: string): Promise<bigint> {
-    const tag = this.blockTag();
+  async readWithdrawalsOwed(
+    market: string,
+    lender: string,
+    tag: BlockTag = this.blockTag()
+  ): Promise<bigint> {
     const expiries: bigint[] = await this.market(market).getUnpaidBatchExpiries({ blockTag: tag });
     if (expiries.length === 0) return 0n;
     const statuses = await this.lens.getWithdrawalBatchesDataWithLenderStatus(market, expiries, lender, {

@@ -40,8 +40,21 @@
       .status { padding: 12px 14px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
       .status.ok { background: rgba(63,191,127,0.12); color: var(--ok); border: 1px solid rgba(63,191,127,0.4); }
       .status.err { background: rgba(255,107,107,0.1); color: var(--err); border: 1px solid rgba(255,107,107,0.4); }
+      .status.warn { background: rgba(240,180,41,0.12); color: var(--accent-2); border: 1px solid rgba(240,180,41,0.45); }
       .hidden { display: none; }
       code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+      textarea { width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; min-height: 84px; }
+      input[type="file"] { width: 100%; font-size: 13px; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px; padding: 12px; cursor: pointer; }
+      details.card > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+      details.card > summary::-webkit-details-marker { display: none; }
+      details.card > summary h2 { margin: 0; }
+      details.card > summary::before { content: "▸"; color: var(--muted); font-size: 12px; }
+      details.card[open] > summary::before { content: "▾"; }
+      details.card > summary + * { margin-top: 14px; }
+      .explain { border-left: 2px solid var(--border); padding: 2px 0 2px 14px; margin: 4px 0 16px; }
+      .explain h3 { font-size: 13px; margin: 12px 0 4px; color: var(--text); }
+      .explain p { color: var(--muted); font-size: 13px; margin: 0 0 6px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     </style>
   </head>
   <body>
@@ -121,14 +134,52 @@
           <label>Signature &amp; verification proof</label>
           <pre id="proofPre" class="code"></pre>
           <button class="copybtn" data-target="proofPre">Copy proof</button>
+          <div class="row" style="margin-top:6px">
+            <button id="downloadZipBtn">⤓ Download both as .zip</button>
+            <span class="hint" style="margin:0">Bundles <code>signed-message.json</code> + <code>proof.json</code> (with a README) — the file to send to the Foundation.</span>
+          </div>
           <div id="verifyNote" class="hint"></div>
         </div>
       </div>
+
+      <details class="card" id="verifyCard">
+        <summary><h2>Foundation · verify a submitted proof</h2></summary>
+
+        <div class="explain">
+          <h3>What is checked</h3>
+          <p><b>1 · Signature authenticity.</b> The recovered signer is computed from the signed message alone. A valid result means the private key controlling that lender address really did sign this exact payload — the submitter cannot forge or alter it after the fact.</p>
+          <p><b>2 · Domain binding.</b> The signature is bound (via EIP-712) to the domain <code>Wildcat Claims v1</code> on this network's chain id. This proves the attestation was made for this claim process and cannot be a signature lifted from somewhere else or replayed on another chain.</p>
+          <p><b>3 · On-chain replay.</b> The claim commits a block number (<code>asOfBlock</code>). We re-read the market and the signer's balance <i>at that block</i> on the Wildcat archive node and confirm: the market was in penalized default, the penalized-days figure matches, and the signer was owed exactly the attested amount.</p>
+
+          <h3>How it's done</h3>
+          <p>Layers 1–2 are pure cryptography (EIP-712 recovery) — no trust in whoever submitted the file. Layer 3 is deterministic: because the figures are pinned to a specific block, anyone with an archive node reads back the identical numbers. Nothing here depends on the applicant being honest.</p>
+
+          <h3>What a “valid” result means</h3>
+          <p>The wallet holder genuinely attested these facts, the attestation belongs to this process, and the facts were true on-chain at the committed block — sufficient to treat it as impacted-lender evidence. A <b>mismatch</b> means the signature is authentic but the committed figures no longer match the chain (e.g. a doctored payload, or a proof produced in DEBUG mode).</p>
+        </div>
+
+        <label>Upload the proof <code>.zip</code> (or drop the two <code>.json</code> files)</label>
+        <input type="file" id="verifyFile" accept=".zip,.json,application/zip,application/json" multiple />
+        <div id="verifyFileStatus" class="hint"></div>
+
+        <label>Signed message JSON</label>
+        <textarea id="verifySigned" placeholder='{ "domain": …, "types": …, "message": … }' spellcheck="false"></textarea>
+        <label>Proof JSON</label>
+        <textarea id="verifyProof" placeholder='{ "signer": "0x…", "signature": "0x…" }' spellcheck="false"></textarea>
+
+        <div class="row" style="margin-top:12px">
+          <button id="verifyBtn">Verify proof</button>
+          <button id="verifyClearBtn" class="copybtn">Clear</button>
+        </div>
+        <div id="verifyStatus"></div>
+        <div id="verifyResult" class="hidden"></div>
+      </details>
     </div>
 
     <script type="module">
       import { BrowserProvider, getAddress, formatUnits, isAddress, verifyTypedData } from "https://cdn.jsdelivr.net/npm/ethers@6.13.2/+esm";
       import { Country } from "https://cdn.jsdelivr.net/npm/country-state-city@3.2.1/+esm";
+      import { zipSync, unzipSync, strToU8, strFromU8 } from "https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm";
 
       const $ = (id) => document.getElementById(id);
       const show = (el) => el.classList.remove("hidden");
@@ -138,6 +189,7 @@
 
       let cfg = null, account = null, selectedMarket = null, elig = null;
       let markets = [];
+      let lastSigned = null, lastProof = null, lastZipBase = "wildcat-claim-proof";
 
       // --- Delinquency / penalty timing (derived from the grace tracker) ----------
       // timeDelinquent counts seconds the market has been delinquent; the penalty APR
@@ -365,15 +417,17 @@
           // Receipt: the exact signed payload + proof the signature verifies, both copyable.
           let recovered = "";
           try { recovered = verifyTypedData(cfg.domain, types, value, signature); } catch (_) {}
-          $("signedPre").textContent = JSON.stringify(
-            { domain: cfg.domain, primaryType: "Data", types, message: value }, null, 2);
-          $("proofPre").textContent = JSON.stringify({
+          lastSigned = { domain: cfg.domain, primaryType: "Data", types, message: value };
+          lastProof = {
             signer: account,
             recoveredFromSignature: recovered,
             signatureValid: !!recovered && recovered.toLowerCase() === account.toLowerCase(),
             signature,
             serverResponse: out,
-          }, null, 2);
+          };
+          lastZipBase = `wildcat-claim-${String(elig.claim.market).slice(0, 10)}-blk${elig.claim.asOfBlock}`;
+          $("signedPre").textContent = JSON.stringify(lastSigned, null, 2);
+          $("proofPre").textContent = JSON.stringify(lastProof, null, 2);
           show($("receipt"));
           $("receipt").querySelectorAll(".copybtn").forEach((b) => {
             const label = b.textContent;
@@ -385,6 +439,173 @@
           });
         } catch (e) {
           setStatus($("submitStatus"), "Submission failed: " + (e.shortMessage || e.message), "err");
+          btn.disabled = false;
+        }
+      });
+
+      // ---- download the two JSON files as one clearly-labelled .zip -------------
+      const README =
+`Wildcat impacted-lender claim — proof bundle
+=============================================
+
+This archive contains a signed, verifiable attestation of eligibility as an
+impacted lender in a distressed Wildcat V2 market.
+
+Files
+-----
+  signed-message.json   The EIP-712 typed data that was signed. This is the
+                        exact { domain, types, message } payload; the "message"
+                        holds the contact details, consent options, and the
+                        on-chain claim (market, penalizedDays, amountOwedWei,
+                        asOfBlock).
+
+  proof.json            The detached signature plus the recovered signer address
+                        and the server's receipt. "signature" over the payload in
+                        signed-message.json recovers to "signer".
+
+How to verify
+-------------
+Open the claim intake site, expand "Foundation · verify a submitted proof",
+and upload this .zip (or paste the two files). The verifier will:
+  1. recover the signer from signed-message.json + proof.json (pure crypto);
+  2. confirm the signature is bound to the Wildcat Claims domain + chain;
+  3. replay asOfBlock on the archive node to confirm the market was in
+     penalized default and the signer was owed amountOwedWei at that block.
+`;
+
+      function downloadBlob(bytes, filename, type) {
+        const url = URL.createObjectURL(new Blob([bytes], { type }));
+        const a = document.createElement("a");
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      $("downloadZipBtn").addEventListener("click", () => {
+        if (!lastSigned || !lastProof) return;
+        const zipped = zipSync({
+          "signed-message.json": strToU8(JSON.stringify(lastSigned, null, 2)),
+          "proof.json": strToU8(JSON.stringify(lastProof, null, 2)),
+          "README.txt": strToU8(README),
+        });
+        downloadBlob(zipped, lastZipBase + ".zip", "application/zip");
+      });
+
+      // ---- Foundation verification tool ----------------------------------------
+      // Classify an arbitrary parsed JSON blob as the signed message or the proof.
+      const looksSigned = (o) => o && typeof o === "object" && o.domain && o.types && o.message;
+      const looksProof = (o) => o && typeof o === "object" && typeof o.signature === "string";
+
+      function fillFromObject(o) {
+        if (looksSigned(o)) { $("verifySigned").value = JSON.stringify(o, null, 2); return "signed"; }
+        if (looksProof(o)) { $("verifyProof").value = JSON.stringify(o, null, 2); return "proof"; }
+        return null;
+      }
+
+      async function ingestFile(file) {
+        const lower = file.name.toLowerCase();
+        const found = [];
+        if (lower.endsWith(".zip")) {
+          const buf = new Uint8Array(await file.arrayBuffer());
+          const entries = unzipSync(buf);
+          for (const [name, bytes] of Object.entries(entries)) {
+            if (!name.toLowerCase().endsWith(".json")) continue;
+            try { const kind = fillFromObject(JSON.parse(strFromU8(bytes))); if (kind) found.push(kind); }
+            catch (_) { /* skip non-JSON */ }
+          }
+        } else {
+          const kind = fillFromObject(JSON.parse(await file.text()));
+          if (kind) found.push(kind);
+        }
+        return found;
+      }
+
+      $("verifyFile").addEventListener("change", async (e) => {
+        const files = [...(e.target.files || [])];
+        if (!files.length) return;
+        setStatus($("verifyFileStatus"), "Reading…", "");
+        try {
+          const found = (await Promise.all(files.map(ingestFile))).flat();
+          if (!found.length) throw new Error("no signed-message / proof JSON recognised");
+          const uniq = [...new Set(found)];
+          setStatus($("verifyFileStatus"), `Loaded ${uniq.join(" + ")} — review below and click Verify.`, "ok");
+        } catch (err) {
+          setStatus($("verifyFileStatus"), "Could not read file: " + err.message, "err");
+        }
+        e.target.value = "";
+      });
+
+      $("verifyClearBtn").addEventListener("click", () => {
+        $("verifySigned").value = ""; $("verifyProof").value = "";
+        setStatus($("verifyFileStatus"), "", ""); setStatus($("verifyStatus"), "", "");
+        hide($("verifyResult"));
+      });
+
+      const yn = (b) => (b ? '<span style="color:var(--ok)">yes ✓</span>' : '<span style="color:var(--err)">no ✗</span>');
+      const matchTag = (b) => (b ? '<span style="color:var(--ok)">match ✓</span>' : '<span style="color:var(--err)">MISMATCH ✗</span>');
+
+      function renderVerify(r) {
+        const verdict = {
+          valid: { cls: "ok", text: "✓ VALID — signature authentic and on-chain figures confirmed at the committed block." },
+          "signature-valid": { cls: "warn", text: "✓ Signature authentic and correctly bound — but the on-chain replay could not be completed (see below)." },
+          mismatch: { cls: "err", text: "✗ MISMATCH — signature is authentic, but the committed figures do not match on-chain state at that block." },
+          invalid: { cls: "err", text: "✗ INVALID — the signature did not verify or is not bound to this deployment." },
+        }[r.overall] || { cls: "err", text: "Unrecognised result." };
+
+        const sig = r.signature || {};
+        const sigLine = !sig.valid
+          ? `<span style="color:var(--err)">${esc(sig.error || "did not recover a signer")}</span>`
+          : `recovers to <code>${esc(sig.recovered)}</code>` +
+            (sig.claimedSigner == null ? "" : (sig.signerMatches
+              ? ` — matches claimed signer ✓`
+              : ` — <span style="color:var(--err)">does NOT match claimed ${esc(sig.claimedSigner)} ✗</span>`));
+
+        let rows = `<dt>Result</dt><dd>${verdict.text}</dd><dt>Signature</dt><dd>${sigLine}</dd>`;
+        if (r.domain) {
+          rows += `<dt>Domain</dt><dd>${esc(r.domain.expected?.name || "")} v${esc(r.domain.expected?.version || "")} · chainId ${esc(r.domain.expected?.chainId)} — ${matchTag(r.domain.matches)}</dd>`;
+        }
+        const oc = r.onChain || {};
+        if (oc.checked) {
+          const dec = oc.assetDecimals ?? 0;
+          const fmt = (wei) => { try { return Number(formatUnits(wei, dec)).toLocaleString(undefined, { maximumFractionDigits: 6 }); } catch (_) { return wei; } };
+          rows += `<dt>Replayed block</dt><dd>${esc(oc.asOfBlock)}</dd>` +
+            `<dt>Market</dt><dd>${esc(oc.marketName || "")} <span class="pill">${esc(oc.market)}</span></dd>` +
+            `<dt>In default @ block</dt><dd>${yn(oc.inDefault)}</dd>` +
+            `<dt>Penalized days</dt><dd>${esc(oc.penalizedDays)} on-chain vs ${esc(r.claim?.penalizedDays)} claimed — ${matchTag(oc.daysMatch)}</dd>` +
+            `<dt>Amount owed</dt><dd>${fmt(oc.amountOwedWei)} ${esc(oc.assetSymbol || "")} (${esc(oc.amountOwedWei)} wei) vs ${esc(r.claim?.amountOwedWei)} claimed — ${matchTag(oc.amountMatches)}</dd>`;
+        } else {
+          rows += `<dt>On-chain replay</dt><dd><span style="color:var(--accent-2)">${esc(oc.error || "not performed")}</span></dd>`;
+        }
+
+        $("verifyResult").innerHTML =
+          `<div class="status ${verdict.cls}" style="margin-bottom:12px">${verdict.text}</div>` +
+          `<dl class="meta">${rows}</dl>` +
+          `<div class="hint" style="margin-top:8px">Verified at ${esc(r.verifiedAt || "")}.</div>`;
+        show($("verifyResult"));
+      }
+
+      $("verifyBtn").addEventListener("click", async () => {
+        let signed, proof;
+        try { signed = JSON.parse($("verifySigned").value); }
+        catch (_) { return setStatus($("verifyStatus"), "Signed message is not valid JSON.", "err"); }
+        try { proof = JSON.parse($("verifyProof").value); }
+        catch (_) { return setStatus($("verifyStatus"), "Proof is not valid JSON.", "err"); }
+
+        const btn = $("verifyBtn");
+        btn.disabled = true;
+        setStatus($("verifyStatus"), "Verifying (recovering signer + replaying on-chain)…", "");
+        try {
+          const res = await fetch("/verify", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ signed, proof }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          setStatus($("verifyStatus"), "", "");
+          renderVerify(await res.json());
+        } catch (err) {
+          setStatus($("verifyStatus"), "Verification failed: " + err.message, "err");
+          hide($("verifyResult"));
+        } finally {
           btn.disabled = false;
         }
       });

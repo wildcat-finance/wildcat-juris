@@ -134,4 +134,46 @@ export class Eligibility {
       asOfBlock,
     };
   }
+
+  /**
+   * Independently re-derive a claim's committed figures at the exact block they were read
+   * at (`asOfBlock`), for verification of a signed attestation. Every read is pinned to
+   * `block`, so the result is deterministic and replayable on any archive node.
+   *
+   * Unlike {@link eligibleClaim} this is an HONEST read: the DEBUG_MODE holdings fudge is
+   * never applied, so the returned amount/penalized-days can be compared byte-for-byte
+   * against what the lender signed.
+   */
+  async verifyClaimAtBlock(account: string, market: string, block: number): Promise<ClaimResult> {
+    const [info, state] = await Promise.all([
+      this.chain.getMarketInfo(market, block),
+      this.chain.getMarketState(market, block),
+    ]);
+
+    const heldWei = await this.chain.readLenderHeld(market, account, block);
+    let withdrawalsWei = 0n;
+    let withdrawalsError = false;
+    if (this.cfg.includeWithdrawals) {
+      try {
+        withdrawalsWei = await this.chain.readWithdrawalsOwed(market, account, block);
+      } catch (err: any) {
+        withdrawalsError = true;
+        console.error(`Withdrawal read failed for ${market}/${account} @${block}: ${err.message}`);
+      }
+    }
+
+    const owed = heldWei + withdrawalsWei;
+    const summary = this.summary(info, state);
+    return {
+      ...summary,
+      account,
+      eligible: summary.inDefault && owed > this.cfg.minOwedWei,
+      heldOwedWei: heldWei.toString(),
+      withdrawalsOwedWei: withdrawalsWei.toString(),
+      withdrawalsError,
+      amountOwedWei: owed.toString(),
+      amountOwed: formatUnits(owed, info.assetDecimals),
+      asOfBlock: block,
+    };
+  }
 }

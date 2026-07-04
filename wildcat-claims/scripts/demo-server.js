@@ -14,6 +14,7 @@ const { Eligibility } = require('../dist/wildcat/eligibility');
 const {
   getFormDataError,
   verifySignature,
+  recoverTypedSigner,
   toSignatureString,
   chainIdFor,
   domainFor,
@@ -120,6 +121,63 @@ app.post('/submit', async (req, res) => {
     ok: true, market, lender: address,
     amountOwedWei: data.claim.amountOwedWei, penalizedDays: data.claim.penalizedDays,
     asOfBlock: data.claim.asOfBlock, submittedAt: new Date().toISOString(), debug: cfg.debugMode,
+  });
+});
+
+// Verify a produced proof (mirrors src/app.ts /verify against the mock chain).
+app.post('/verify', async (req, res) => {
+  const { signed, proof } = req.body || {};
+  const domain = signed?.domain, types = signed?.types, message = signed?.message;
+  const signature = proof?.signature ?? signed?.signature;
+  if (!domain || !types || !message || typeof signature !== 'string') {
+    return res.status(400).send('Provide a signed message (domain, types, message) and a signature.');
+  }
+  let recovered;
+  try {
+    recovered = getAddress(recoverTypedSigner(domain, types, message, signature));
+  } catch (err) {
+    return res.json({ signature: { valid: false, error: 'Signature does not recover a signer: ' + err.message }, overall: 'invalid', verifiedAt: new Date().toISOString() });
+  }
+  const claimedSigner = asAddress(proof?.signer);
+  const signerMatches = claimedSigner ? claimedSigner === recovered : null;
+  const claim = message.claim || {};
+  const network = typeof claim.network === 'string' ? claim.network : cfg.network;
+  const expectedDomain = domainFor(network);
+  const domainMatches = domain.name === expectedDomain.name && String(domain.version) === String(expectedDomain.version) && Number(domain.chainId) === Number(expectedDomain.chainId);
+  const networkMatches = network === cfg.network;
+
+  const market = asAddress(claim.market);
+  const asOfBlock = Number(claim.asOfBlock);
+  let onChain = { checked: false };
+  if (!networkMatches) {
+    onChain = { checked: false, error: `Proof is for network "${network}"; this verifier serves "${cfg.network}".` };
+  } else if (market && Number.isInteger(asOfBlock) && asOfBlock > 0) {
+    try {
+      const live = await eligibility.verifyClaimAtBlock(recovered, market, asOfBlock);
+      onChain = {
+        checked: true, asOfBlock, market, marketName: live.name, assetSymbol: live.assetSymbol, assetDecimals: live.assetDecimals,
+        inDefault: live.inDefault, penalizedDays: live.penalizedDays, amountOwedWei: live.amountOwedWei,
+        daysMatch: Number(live.penalizedDays) === Number(claim.penalizedDays), amountMatches: live.amountOwedWei === String(claim.amountOwedWei),
+        signerHeldPosition: BigInt(live.amountOwedWei) > 0n, withdrawalsError: live.withdrawalsError,
+      };
+    } catch (err) { onChain = { checked: false, error: 'On-chain replay failed: ' + err.message }; }
+  } else {
+    onChain = { checked: false, error: 'Signed message has no market/asOfBlock to replay.' };
+  }
+
+  const sigOk = domainMatches && signerMatches !== false;
+  const chainOk = onChain.checked ? Boolean(onChain.inDefault) && Boolean(onChain.amountMatches) && Boolean(onChain.daysMatch) : null;
+  let overall;
+  if (!sigOk) overall = 'invalid';
+  else if (chainOk === false) overall = 'mismatch';
+  else if (chainOk === true) overall = 'valid';
+  else overall = 'signature-valid';
+
+  res.json({
+    signature: { valid: true, recovered, claimedSigner, signerMatches },
+    domain: { matches: domainMatches, networkMatches, expected: expectedDomain, provided: domain },
+    claim: { network, market, penalizedDays: Number(claim.penalizedDays), amountOwedWei: String(claim.amountOwedWei), asOfBlock },
+    onChain, overall, verifiedAt: new Date().toISOString(),
   });
 });
 
