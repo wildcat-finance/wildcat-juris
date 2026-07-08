@@ -91,18 +91,22 @@ export class Eligibility {
    * expired withdrawals), read live.
    */
   async eligibleClaim(account: string, market: string): Promise<ClaimResult> {
-    const [info, state, asOfBlock] = await Promise.all([
+    // Resolve the block FIRST and pin every read to it. Reading at 'latest' while stamping a
+    // separately-fetched block number lets the figures come from a different block than the
+    // signature commits to, so an honest lender's proof would fail archive replay (interest
+    // accrues per second) and held/withdrawals could straddle a queueWithdrawal tx.
+    const asOfBlock = await this.chain.resolveAsOfBlock();
+    const [info, state] = await Promise.all([
       this.chain.getMarketInfo(market),
-      this.chain.getMarketState(market),
-      this.chain.resolveAsOfBlock(),
+      this.chain.getMarketState(market, asOfBlock),
     ]);
 
-    let heldWei = await this.chain.readLenderHeld(market, account);
+    let heldWei = await this.chain.readLenderHeld(market, account, asOfBlock);
     let withdrawalsWei = 0n;
     let withdrawalsError = false;
     if (this.cfg.includeWithdrawals) {
       try {
-        withdrawalsWei = await this.chain.readWithdrawalsOwed(market, account);
+        withdrawalsWei = await this.chain.readWithdrawalsOwed(market, account, asOfBlock);
       } catch (err: any) {
         withdrawalsError = true;
         console.error(`Withdrawal read failed for ${market}/${account}: ${err.message}`);
