@@ -222,10 +222,10 @@ export class Chain {
     return info;
   }
 
-  /** Live delinquency state (verified currentState path). */
-  async getMarketState(market: string): Promise<MarketState> {
+  /** Live delinquency state (verified currentState path). Pass `atBlock` to pin the read. */
+  async getMarketState(market: string, atBlock?: BlockTag): Promise<MarketState> {
     const m = this.market(market);
-    const tag = { blockTag: this.blockTag() };
+    const tag = { blockTag: atBlock ?? this.blockTag() };
     const [state, grace] = await Promise.all([m.currentState(tag), m.delinquencyGracePeriod(tag)]);
     return {
       isClosed: state.isClosed,
@@ -240,8 +240,8 @@ export class Chain {
    * MarketLensV2.getLenderAccountData; a decode/call failure auto-falls-back to the
    * market's balanceOf. With LENS_MODE=direct, balanceOf is used directly.
    */
-  async readLenderHeld(market: string, lender: string): Promise<bigint> {
-    const tag = this.blockTag();
+  async readLenderHeld(market: string, lender: string, atBlock?: BlockTag): Promise<bigint> {
+    const tag = atBlock ?? this.blockTag();
     if (this.cfg.lensMode === 'lens') {
       try {
         const data = await this.lens.getLenderAccountData(lender, market, { blockTag: tag });
@@ -262,8 +262,8 @@ export class Chain {
    * Authoritative: sums MarketLensV2 WithdrawalBatchLenderStatus.normalizedAmountOwed
    * across the market's unpaid batches.
    */
-  async readWithdrawalsOwed(market: string, lender: string): Promise<bigint> {
-    const tag = this.blockTag();
+  async readWithdrawalsOwed(market: string, lender: string, atBlock?: BlockTag): Promise<bigint> {
+    const tag = atBlock ?? this.blockTag();
     // Copy the frozen ethers Result into a plain array: passing a Result back in as a
     // call argument throws ("Cannot assign to read only property '0'") during encoding.
     const expiries: bigint[] = [
