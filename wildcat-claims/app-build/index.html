@@ -302,7 +302,9 @@
         const owed = Number(formatUnits(elig.amountOwedWei, elig.assetDecimals));
         const defPill = badgeHtml(elig);
         if (!elig.eligible) {
-          const why = "This address holds no position in this market.";
+          const why = elig.withdrawalsError
+            ? "The withdrawal-queue read failed, so any amounts you have queued for withdrawal could not be counted. This result may not reflect your real position — please try again in a moment."
+            : "This address holds no position in this market.";
           $("eligBody").innerHTML = `<div class="meta">
               <dt>Market</dt><dd>${elig.name} ${defPill}</dd>
               <dt>Your position</dt><dd>${owed.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${elig.assetSymbol}</dd>

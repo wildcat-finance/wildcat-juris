@@ -264,7 +264,11 @@ export class Chain {
    */
   async readWithdrawalsOwed(market: string, lender: string): Promise<bigint> {
     const tag = this.blockTag();
-    const expiries: bigint[] = await this.market(market).getUnpaidBatchExpiries({ blockTag: tag });
+    // Copy the frozen ethers Result into a plain array: passing a Result back in as a
+    // call argument throws ("Cannot assign to read only property '0'") during encoding.
+    const expiries: bigint[] = [
+      ...(await this.market(market).getUnpaidBatchExpiries({ blockTag: tag })),
+    ];
     if (expiries.length === 0) return 0n;
     const statuses = await this.lens.getWithdrawalBatchesDataWithLenderStatus(market, expiries, lender, {
       blockTag: tag,
