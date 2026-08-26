@@ -94,7 +94,14 @@ function packSignatures(signers, digest) {
   const safeAddr = await safe.getAddress();
 
   // The exact claim a lender signs (same shape the frontend builds / the server verifies).
-  const form = { name: 'Acme Capital DAO', email: 'ops@acme.fund', other: '', country: 'US', acceptTerms: true };
+  const form = {
+    name: 'Acme Capital DAO',
+    email: 'ops@acme.fund',
+    other: '',
+    country: 'US',
+    acceptTerms: true,
+    acceptUndertaking: true,
+  };
   const claim = {
     network: 'mainnet',
     market: getAddress('0x1111111111111111111111111111111111111111'),

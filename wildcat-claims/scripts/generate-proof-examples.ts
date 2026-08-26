@@ -18,6 +18,7 @@ import { Wallet, getAddress, verifyTypedData, TypedDataEncoder, hashMessage } fr
 import {
   domainFor,
   EIP712_TYPES,
+  QUALIFYING_LENDER_UNDERTAKING,
   toSignatureString,
   verifySignature,
   type FormData,
@@ -36,6 +37,7 @@ const form: FormData = {
   other: '',
   country: 'GB',
   acceptTerms: true,
+  acceptUndertaking: true,
 };
 
 const claim: SignedClaimContext = {
@@ -54,6 +56,7 @@ const typedMessage = (f: FormData, c: SignedClaimContext) => ({
   contactInfo: { name: f.name, email: f.email || '', other: f.other || '' },
   location: { country: f.country },
   options: { acceptTerms: f.acceptTerms },
+  undertaking: { agreed: f.acceptUndertaking, text: QUALIFYING_LENDER_UNDERTAKING },
   claim: {
     network: c.network,
     market: getAddress(c.market),

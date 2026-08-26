@@ -6,11 +6,13 @@
     "other: ",
     "country: GB",
     "acceptTerms: true",
+    "acceptUndertaking: true",
+    "undertaking: As a Qualifying Lender, you acknowledge and agree that by receiving any information relating to the Borrower's Identifying Particulars, you shall not use that information for any purpose other than (i) in connection with the Market in respect of which that information was disclosed to you and (ii) to pursue any legitimate course of action arising therefrom.",
     "network: mainnet",
     "market: 0x00000000000000000000000000000000000000A1",
     "penalizedDays: 118",
     "amountOwedWei: 250000000000",
     "asOfBlock: 20812345"
   ],
-  "message": "name: Ada Lovelace\nemail: ada@example.io\nother: \ncountry: GB\nacceptTerms: true\nnetwork: mainnet\nmarket: 0x00000000000000000000000000000000000000A1\npenalizedDays: 118\namountOwedWei: 250000000000\nasOfBlock: 20812345"
+  "message": "name: Ada Lovelace\nemail: ada@example.io\nother: \ncountry: GB\nacceptTerms: true\nacceptUndertaking: true\nundertaking: As a Qualifying Lender, you acknowledge and agree that by receiving any information relating to the Borrower's Identifying Particulars, you shall not use that information for any purpose other than (i) in connection with the Market in respect of which that information was disclosed to you and (ii) to pursue any legitimate course of action arising therefrom.\nnetwork: mainnet\nmarket: 0x00000000000000000000000000000000000000A1\npenalizedDays: 118\namountOwedWei: 250000000000\nasOfBlock: 20812345"
 }

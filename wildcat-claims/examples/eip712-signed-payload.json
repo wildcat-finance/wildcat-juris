@@ -32,6 +32,16 @@
         "type": "bool"
       }
     ],
+    "Undertaking": [
+      {
+        "name": "agreed",
+        "type": "bool"
+      },
+      {
+        "name": "text",
+        "type": "string"
+      }
+    ],
     "Claim": [
       {
         "name": "network",
@@ -68,6 +78,10 @@
         "type": "Options"
       },
       {
+        "name": "undertaking",
+        "type": "Undertaking"
+      },
+      {
         "name": "claim",
         "type": "Claim"
       }
@@ -84,6 +98,10 @@
     },
     "options": {
       "acceptTerms": true
+    },
+    "undertaking": {
+      "agreed": true,
+      "text": "As a Qualifying Lender, you acknowledge and agree that by receiving any information relating to the Borrower's Identifying Particulars, you shall not use that information for any purpose other than (i) in connection with the Market in respect of which that information was disclosed to you and (ii) to pursue any legitimate course of action arising therefrom."
     },
     "claim": {
       "network": "mainnet",

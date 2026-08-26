@@ -33,6 +33,9 @@
       .pill.def { color: var(--err); border-color: rgba(255,107,107,0.5); }
       .pill.ok { color: var(--ok); border-color: rgba(63,191,127,0.5); }
       .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+      .undertaking { background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+        border-radius: 8px; padding: 12px 14px; margin: 0 0 4px; font-size: 13.5px; line-height: 1.55; color: var(--text); }
+      .undertaking p { margin: 0; }
       .banner { background: rgba(240,180,41,0.15); border: 1px solid var(--accent); color: var(--accent-2); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; font-weight: 600; }
       .code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; margin: 6px 0; }
       .copybtn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 500; margin-bottom: 10px; }
@@ -56,6 +59,13 @@
       <div class="card">
         <h2>Context</h2>
         <dl class="meta" id="contextMeta"><dd>Loading…</dd></dl>
+      </div>
+
+      <div class="card">
+        <h2>Qualifying Lender undertaking</h2>
+        <blockquote class="undertaking" id="undertakingText"></blockquote>
+        <div class="hint">You will be asked to agree to this before signing, and your agreement is committed
+          inside the signed claim itself.</div>
       </div>
 
       <div class="card">
@@ -107,6 +117,10 @@
         <label>Country *</label>
         <select id="country"></select>
 
+        <label style="margin-top:18px">Qualifying Lender undertaking *</label>
+        <blockquote class="undertaking" id="undertakingTextForm"></blockquote>
+        <label class="check"><input type="checkbox" id="acceptUndertaking" /><span>As a Qualifying Lender, I acknowledge and agree to the undertaking set out above. This wording is included verbatim in the message I sign. *</span></label>
+
         <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and intend to submit this proof to the Wildcat Foundation as evidence of my eligibility as an impacted lender. *</span></label>
 
         <button id="submitBtn">Sign &amp; submit claim</button>
@@ -136,6 +150,17 @@
       const hide = (el) => el.classList.add("hidden");
       const setStatus = (el, msg, kind) => { el.className = msg ? "status " + (kind || "") : ""; el.textContent = msg; };
       const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+      // Verbatim Qualifying Lender undertaking. Signed as part of the claim, so this string must
+      // match QUALIFYING_LENDER_UNDERTAKING in src/utils.ts character for character — the server
+      // rebuilds the typed data from its own copy, and any drift makes every signature invalid.
+      // test/undertaking.test.ts asserts the two stay identical.
+      const UNDERTAKING =
+        "As a Qualifying Lender, you acknowledge and agree that by receiving any information " +
+        "relating to the Borrower's Identifying Particulars, you shall not use that information " +
+        "for any purpose other than (i) in connection with the Market in respect of which that " +
+        "information was disclosed to you and (ii) to pursue any legitimate course of action " +
+        "arising therefrom.";
 
       let cfg = null, account = null, selectedMarket = null, elig = null;
       let markets = [];
@@ -335,10 +360,12 @@
           other: $("other").value.trim(),
           country: $("country").value,
           acceptTerms: $("acceptTerms").checked,
+          acceptUndertaking: $("acceptUndertaking").checked,
         };
         if (!form.name) return setStatus($("submitStatus"), "Please enter your name.", "err");
         if (!form.email && !form.other) return setStatus($("submitStatus"), "Provide an email or other contact.", "err");
         if (!form.country) return setStatus($("submitStatus"), "Please select a country.", "err");
+        if (!form.acceptUndertaking) return setStatus($("submitStatus"), "You must agree to the Qualifying Lender undertaking.", "err");
         if (!form.acceptTerms) return setStatus($("submitStatus"), "You must confirm the consent checkbox.", "err");
 
         const btn = $("submitBtn");
@@ -351,6 +378,7 @@
             Contact: [ { name: "name", type: "string" }, { name: "email", type: "string" }, { name: "other", type: "string" } ],
             Location: [ { name: "country", type: "string" } ],
             Options: [ { name: "acceptTerms", type: "bool" } ],
+            Undertaking: [ { name: "agreed", type: "bool" }, { name: "text", type: "string" } ],
             Claim: [
               { name: "network", type: "string" },
               { name: "market", type: "address" },
@@ -358,12 +386,13 @@
               { name: "amountOwedWei", type: "uint256" },
               { name: "asOfBlock", type: "uint256" },
             ],
-            Data: [ { name: "contactInfo", type: "Contact" }, { name: "location", type: "Location" }, { name: "options", type: "Options" }, { name: "claim", type: "Claim" } ],
+            Data: [ { name: "contactInfo", type: "Contact" }, { name: "location", type: "Location" }, { name: "options", type: "Options" }, { name: "undertaking", type: "Undertaking" }, { name: "claim", type: "Claim" } ],
           };
           const value = {
             contactInfo: { name: form.name, email: form.email || "", other: form.other || "" },
             location: { country: form.country },
             options: { acceptTerms: form.acceptTerms },
+            undertaking: { agreed: form.acceptUndertaking, text: UNDERTAKING },
             claim: elig.claim,
           };
           const signature = await signer.signTypedData(cfg.domain, types, value);
@@ -414,6 +443,13 @@
         }
       });
 
+      function renderUndertaking() {
+        const html = `<p>&ldquo;${esc(UNDERTAKING)}&rdquo;</p>`;
+        $("undertakingText").innerHTML = html;
+        $("undertakingTextForm").innerHTML = html;
+      }
+
+      renderUndertaking();
       loadConfig().then(trySafeApp);
       initCountries();
     </script>

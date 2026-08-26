@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { Wallet, getAddress } from 'ethers';
+import { Wallet, getAddress, verifyTypedData } from 'ethers';
 import {
   verifySignature,
   domainFor,
   EIP712_TYPES,
   toSignatureString,
+  getFormDataError,
+  QUALIFYING_LENDER_UNDERTAKING,
   type FormData,
   type SignedClaimContext,
 } from '../src/utils';
@@ -18,6 +20,7 @@ const form: FormData = {
   other: '',
   country: 'US',
   acceptTerms: true,
+  acceptUndertaking: true,
 };
 
 const claim: SignedClaimContext = {
@@ -33,6 +36,7 @@ const typedValue = (f: FormData, c: SignedClaimContext) => ({
   contactInfo: { name: f.name, email: f.email, other: f.other },
   location: { country: f.country },
   options: { acceptTerms: f.acceptTerms },
+  undertaking: { agreed: f.acceptUndertaking, text: QUALIFYING_LENDER_UNDERTAKING },
   claim: {
     network: c.network,
     market: c.market,
@@ -63,11 +67,48 @@ describe('signature verification', () => {
     );
   });
 
+  it('does not recover the signer when the undertaking agreement is flipped', async () => {
+    const w = Wallet.createRandom();
+    const sig = await w.signTypedData(domainFor(claim.network), EIP712_TYPES, typedValue(form, claim));
+    expect(
+      getAddress(verifySignature({ ...form, acceptUndertaking: false }, claim, sig))
+    ).not.toBe(getAddress(w.address));
+  });
+
+  it('does not recover the signer when the undertaking wording is altered', async () => {
+    const w = Wallet.createRandom();
+    // Sign the real typed data, then verify against typed data carrying reworded undertaking text.
+    const sig = await w.signTypedData(domainFor(claim.network), EIP712_TYPES, typedValue(form, claim));
+    const tampered = {
+      ...typedValue(form, claim),
+      undertaking: { agreed: true, text: QUALIFYING_LENDER_UNDERTAKING.replace('shall not', 'may') },
+    };
+    expect(getAddress(verifyTypedData(domainFor(claim.network), EIP712_TYPES, tampered, sig))).not.toBe(
+      getAddress(w.address)
+    );
+  });
+
   it('does not recover the signer when replayed against another network (chainId-bound)', async () => {
     const w = Wallet.createRandom();
     const sig = await w.signTypedData(domainFor(claim.network), EIP712_TYPES, typedValue(form, claim));
     expect(getAddress(verifySignature(form, { ...claim, network: 'sepolia' }, sig))).not.toBe(
       getAddress(w.address)
     );
+  });
+});
+
+describe('Qualifying Lender undertaking', () => {
+  it('is committed verbatim in both signing paths', () => {
+    expect(toSignatureString(form, claim)).toContain(QUALIFYING_LENDER_UNDERTAKING);
+    expect(JSON.stringify(typedValue(form, claim))).toContain(
+      JSON.stringify(QUALIFYING_LENDER_UNDERTAKING).slice(1, -1)
+    );
+  });
+
+  it('is rejected server-side when not agreed to', () => {
+    expect(getFormDataError({ ...form, acceptUndertaking: false })).toBe(
+      'Must agree to the Qualifying Lender undertaking'
+    );
+    expect(getFormDataError(form)).toBeUndefined();
   });
 });

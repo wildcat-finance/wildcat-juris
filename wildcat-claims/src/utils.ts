@@ -9,6 +9,23 @@ import {
 } from 'ethers';
 
 // ========================================================================== //
+//                       Qualifying Lender undertaking                        //
+// ========================================================================== //
+
+/**
+ * The confidentiality undertaking a Qualifying Lender gives over a Borrower's Identifying
+ * Particulars. Signed verbatim as part of the claim, so the signature commits to this exact
+ * wording — do not reword, reflow or re-punctuate it: any edit changes every digest and
+ * invalidates previously issued proofs (regenerate `examples/` if it ever must change).
+ */
+export const QUALIFYING_LENDER_UNDERTAKING =
+  'As a Qualifying Lender, you acknowledge and agree that by receiving any information ' +
+  "relating to the Borrower's Identifying Particulars, you shall not use that information " +
+  'for any purpose other than (i) in connection with the Market in respect of which that ' +
+  'information was disclosed to you and (ii) to pursue any legitimate course of action ' +
+  'arising therefrom.';
+
+// ========================================================================== //
 //                                   Types                                    //
 // ========================================================================== //
 
@@ -19,6 +36,8 @@ export interface FormData {
   /** ISO country code (country-level only; no state/city). */
   country: string;
   acceptTerms: boolean;
+  /** Agreement to QUALIFYING_LENDER_UNDERTAKING (confidentiality of Identifying Particulars). */
+  acceptUndertaking: boolean;
 }
 
 /**
@@ -68,6 +87,7 @@ function getContactInfoError(d: FormData): string | undefined {
 
 function getOptionsError(d: FormData): string | undefined {
   if (!d.acceptTerms) return 'Must accept terms';
+  if (!d.acceptUndertaking) return 'Must agree to the Qualifying Lender undertaking';
   return undefined;
 }
 
@@ -102,6 +122,12 @@ export const EIP712_TYPES = {
   ],
   Location: [{ name: 'country', type: 'string' }],
   Options: [{ name: 'acceptTerms', type: 'bool' }],
+  // The undertaking travels with its own text, so the signature commits to the wording agreed
+  // to — not merely to a boolean whose meaning lives off-chain.
+  Undertaking: [
+    { name: 'agreed', type: 'bool' },
+    { name: 'text', type: 'string' },
+  ],
   Claim: [
     { name: 'network', type: 'string' },
     { name: 'market', type: 'address' },
@@ -113,6 +139,7 @@ export const EIP712_TYPES = {
     { name: 'contactInfo', type: 'Contact' },
     { name: 'location', type: 'Location' },
     { name: 'options', type: 'Options' },
+    { name: 'undertaking', type: 'Undertaking' },
     { name: 'claim', type: 'Claim' },
   ],
 };
@@ -121,6 +148,7 @@ const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
   contactInfo: { name: form.name, email: form.email || '', other: form.other || '' },
   location: { country: form.country },
   options: { acceptTerms: form.acceptTerms },
+  undertaking: { agreed: form.acceptUndertaking, text: QUALIFYING_LENDER_UNDERTAKING },
   claim: {
     network: claim.network,
     market: getAddress(claim.market),
@@ -137,6 +165,8 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `other: ${form.other || ''}`,
     `country: ${form.country}`,
     `acceptTerms: ${form.acceptTerms}`,
+    `acceptUndertaking: ${form.acceptUndertaking}`,
+    `undertaking: ${QUALIFYING_LENDER_UNDERTAKING}`,
     `network: ${claim.network}`,
     `market: ${getAddress(claim.market)}`,
     `penalizedDays: ${claim.penalizedDays}`,

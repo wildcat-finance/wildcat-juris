@@ -60,10 +60,16 @@ design docs.
   much is owed, and the block the figures were read at, so anyone can replay that block on an
   archive node to confirm the data is real, and the signature can't be reused elsewhere. The
   server re-checks eligibility live, then returns a copyable proof (nothing is stored).
+- **Qualifying Lender undertaking** — the confidentiality undertaking over a borrower's
+  Identifying Particulars is shown in the page body, ticked explicitly before signing, and
+  carried **verbatim** inside the signed message (`undertaking { agreed, text }`), so the
+  signature is itself evidence of agreement to that exact wording. The server rebuilds the
+  digest from its own copy of the text (`QUALIFYING_LENDER_UNDERTAKING` in `src/utils.ts`) and
+  rejects a submission that does not agree to it.
 
 ## Endpoints
 
-- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain, debug flag.
+- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain, the Qualifying Lender undertaking text, debug flag.
 - `POST /markets` — `{ borrower }` → that borrower's markets with names + live `inDefault`.
 - `POST /eligibility` — `{ account, market }` → owed amount, default status, and the claim context to sign.
 - `POST /submit` — `{ data: { form, claim }, signature }` → re-verifies the signature + eligibility and returns a copyable proof.

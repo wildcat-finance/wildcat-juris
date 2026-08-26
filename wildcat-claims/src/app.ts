@@ -13,6 +13,7 @@ import {
   claimDigest,
   chainIdFor,
   domainFor,
+  QUALIFYING_LENDER_UNDERTAKING,
   type SubmitData,
 } from './utils';
 
@@ -75,6 +76,9 @@ export function createApp(): Express {
       borrower: cfg.borrower ?? null,
       defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
       domain: domainFor(cfg.network),
+      // Verbatim undertaking, so any client can render and sign the exact wording the server
+      // rebuilds the digest from.
+      undertaking: QUALIFYING_LENDER_UNDERTAKING,
       debug: cfg.debugMode,
     })
   );

@@ -73,7 +73,7 @@ claim digest, and runs it through the tool's actual verification code:
 
 ```
 Mock Safe (2-of-3) deployed at 0x6D3E8aCeD2674f2C0403a7F2a34b2F6d390e1903
-Claim digest (EIP-712)         0xb954933898508b16301d22be1cac9ddf1a08b5f946839425b4f49c7c024b6515
+Claim digest (EIP-712)         0x3e117b8cb4940c80c1965aa1fb405bb1b17806ff085000edb1c925821ae898f5
 
 — Raw EIP-1271 (what any verifier sees) —
   isValidSignature(digest, 2 owner sigs) = 0x1626ba7e (0x1626ba7e = valid)

@@ -18,6 +18,7 @@ function formFrom(msg: any): FormData {
     other: msg.contactInfo.other,
     country: msg.location.country,
     acceptTerms: msg.options.acceptTerms,
+    acceptUndertaking: msg.undertaking.agreed,
   };
 }
 function claimFrom(msg: any): SignedClaimContext {

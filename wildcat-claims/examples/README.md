@@ -25,6 +25,7 @@ npm run examples
 | `penalizedDays` | `118`                                        |
 | `amountOwedWei` | `250000000000` (250,000 of a 6-decimal asset)|
 | `asOfBlock`     | `20812345`                                   |
+| `undertaking`   | `{ agreed: true, text: <verbatim undertaking> }` |
 | signer          | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
 
 ## Files
@@ -48,6 +49,17 @@ npm run examples
 Either way the claim commits to `{ network, market, penalizedDays, amountOwedWei, asOfBlock }`,
 so the proof binds *which* market, *how much* was owed, and *at which block* — anyone can replay
 `asOfBlock` on an archive node to confirm the figures.
+
+## The Qualifying Lender undertaking
+
+Both payloads also carry the Qualifying Lender undertaking — the confidentiality obligation over
+a borrower's Identifying Particulars — as `undertaking { agreed, text }` (typed data) and as the
+`acceptUndertaking` / `undertaking` lines (`personal_sign`). The **full text travels inside the
+signed message**, so the signature evidences agreement to that exact wording rather than to a
+bare boolean whose meaning lives elsewhere. Reword the text by a single character and the digest
+changes, every prior proof stops verifying against it, and these examples must be regenerated —
+`test/undertaking.test.ts` pins the frontend copy to `QUALIFYING_LENDER_UNDERTAKING` in
+`src/utils.ts` to stop the two drifting apart silently.
 
 ## Smart-contract wallets (Safe / EIP-1271)
 
