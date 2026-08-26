@@ -25,15 +25,50 @@ function declBody(name: string): string {
   return decl[1];
 }
 
+/**
+ * Unescape one JS string literal, single- or double-quoted, the way the engine would.
+ *
+ * Written as an escape-aware scan rather than a requote-and-JSON.parse: a backslash is always
+ * consumed together with the character it escapes, so `\\` cannot be mistaken for the start of
+ * another escape and a quote of the other kind needs no handling at all.
+ */
+function unquote(literal: string): string {
+  const body = literal.slice(1, -1);
+  let out = '';
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== '\\') {
+      out += body[i];
+      continue;
+    }
+    const esc = body[++i];
+    switch (esc) {
+      case 'n': out += '\n'; break;
+      case 'r': out += '\r'; break;
+      case 't': out += '\t'; break;
+      case 'b': out += '\b'; break;
+      case 'f': out += '\f'; break;
+      case 'v': out += '\v'; break;
+      case '0': out += '\0'; break;
+      case 'x':
+        out += String.fromCharCode(parseInt(body.slice(i + 1, i + 3), 16));
+        i += 2;
+        break;
+      case 'u':
+        out += String.fromCharCode(parseInt(body.slice(i + 1, i + 5), 16));
+        i += 4;
+        break;
+      // \\ , \' , \" and anything else escaped stands for the character itself.
+      default: out += esc;
+    }
+  }
+  return out;
+}
+
 /** Every JS string literal in a declaration, unescaped. Handles both '…' and "…" quoting. */
 function literals(src: string): string[] {
   const parts = src.match(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g);
   if (!parts) throw new Error('no string literals found');
-  return parts.map((p) =>
-    p.startsWith("'")
-      ? (JSON.parse('"' + p.slice(1, -1).replace(/"/g, '\\"') + '"') as string)
-      : (JSON.parse(p) as string)
-  );
+  return parts.map(unquote);
 }
 
 /** Concatenated literals (`"a " + "b"`) assigned to `const UNDERTAKING`, joined back up. */
@@ -53,6 +88,16 @@ function definitionsFromPage(): string[] {
     .map((entry) => literals(entry).join(''))
     .filter((d) => d.length > 0);
 }
+
+describe('reading the page\'s copy of the text', () => {
+  it('unescapes literals containing backslashes, quotes and control escapes', () => {
+    expect(unquote(String.raw`'a\\b'`)).toBe('a\\b');
+    expect(unquote(String.raw`'it\'s "quoted"'`)).toBe('it\'s "quoted"');
+    expect(unquote(String.raw`"tab\there"`)).toBe('tab\there');
+    // A trailing escaped backslash must not swallow the closing quote's place.
+    expect(unquote(String.raw`'ends with \\'`)).toBe('ends with \\');
+  });
+});
 
 describe('Qualifying Lender undertaking wording', () => {
   it('is identical in the frontend and the server', () => {
