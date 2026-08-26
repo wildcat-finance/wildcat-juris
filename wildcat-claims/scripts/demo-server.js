@@ -12,6 +12,15 @@ const { Wallet, getAddress } = require('ethers');
 
 const { Eligibility } = require('../dist/wildcat/eligibility');
 const {
+  DEBUG_COOKIE,
+  clearDebugCookieHeader,
+  debugCookieHeader,
+  mintDebugToken,
+  parseCookies,
+  secretEquals,
+  verifyDebugToken,
+} = require('../dist/debugSession');
+const {
   getFormDataError,
   verifySignature,
   recoverTypedSigner,
@@ -38,7 +47,15 @@ const cfg = {
   minOwedWei: 0n,
   lensMode: 'direct',
   debugMode: false, // production-honest; the mock defaulted market is eligible without debug
+  // Mirrors the hosted deployment's DEBUG_KEY so /#dbg=<key> can be exercised locally.
+  debugKey: (process.env.DEBUG_KEY || 'demo-debug-key-' + 'd'.repeat(24)).trim(),
 };
+
+/** Same per-request rule as src/app.ts: process-wide flag, or this browser's session cookie. */
+const isDebug = (req) =>
+  cfg.debugMode ||
+  (!!cfg.debugKey &&
+    verifyDebugToken(cfg.debugKey, parseCookies(req.headers.cookie)[DEBUG_COOKIE], Date.now()));
 
 // timeDelinquent for an in-default market: grace + 90d + slack.
 const DEFAULTED = 3n * DAY + 90n * DAY + 3600n;
@@ -82,15 +99,31 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
-app.get('/config', (_req, res) => res.json({
+app.get('/config', (req, res) => res.json({
   network: cfg.network, chainId: chainIdFor(cfg.network), borrower: cfg.borrower,
-  defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400), domain: domainFor(cfg.network),
+  defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
+  domain: domainFor(cfg.network, isDebug(req)),
   undertaking: QUALIFYING_LENDER_UNDERTAKING,
   undertakingDefinitions: QUALIFYING_LENDER_DEFINITION_LIST,
   undertakingAgreement: QUALIFYING_LENDER_AGREEMENT,
   undertakingSha256: QUALIFYING_LENDER_AGREEMENT_SHA256,
-  debug: cfg.debugMode,
+  debug: isDebug(req),
 }));
+
+// Open/close a debug session, as src/app.ts does. Not secure-flagged: the demo serves http.
+app.post('/debug/session', (req, res) => {
+  if (!cfg.debugKey) return res.status(404).send('Not found');
+  if ((req.body || {}).end === true) {
+    res.setHeader('Set-Cookie', clearDebugCookieHeader(false));
+    return res.json({ debug: false });
+  }
+  const key = (req.body || {}).key;
+  if (typeof key !== 'string' || !secretEquals(key, cfg.debugKey)) {
+    return res.status(404).send('Not found');
+  }
+  res.setHeader('Set-Cookie', debugCookieHeader(mintDebugToken(cfg.debugKey, Date.now()), false));
+  return res.json({ debug: true });
+});
 
 app.post('/markets', async (req, res) => {
   const borrower = asAddress((req.body || {}).borrower);
@@ -102,9 +135,11 @@ app.post('/eligibility', async (req, res) => {
   const account = asAddress((req.body || {}).account);
   const market = asAddress((req.body || {}).market);
   if (!account || !market) return res.status(400).send('Invalid account/market');
-  const result = await eligibility.eligibleClaim(account, market);
+  const debug = isDebug(req);
+  const result = await eligibility.eligibleClaim(account, market, debug);
   res.json({
     ...result,
+    debug,
     claim: {
       network: cfg.network,
       market,
@@ -126,14 +161,15 @@ app.post('/submit', async (req, res) => {
   if (!lender) return res.status(400).send('Invalid account address');
   // Demo uses a mock chain (EOA signers only): verify ECDSA recovers to the lender.
   let valid = false;
-  try { valid = verifySignature(data.form, data.claim, signature).toLowerCase() === lender.toLowerCase(); } catch {}
+  const debug = isDebug(req);
+  try { valid = verifySignature(data.form, data.claim, signature, debug).toLowerCase() === lender.toLowerCase(); } catch {}
   if (!valid) return res.status(400).send('Invalid signature');
-  const result = await eligibility.eligibleClaim(lender, market);
+  const result = await eligibility.eligibleClaim(lender, market, debug);
   if (!result.eligible) return res.status(400).send('No eligible position for this address in this market');
   res.json({
     ok: true, market, lender,
     amountOwedWei: data.claim.amountOwedWei, penalizedDays: data.claim.penalizedDays,
-    asOfBlock: data.claim.asOfBlock, submittedAt: new Date().toISOString(), debug: cfg.debugMode,
+    asOfBlock: data.claim.asOfBlock, submittedAt: new Date().toISOString(), debug,
   });
 });
 

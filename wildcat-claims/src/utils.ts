@@ -159,13 +159,25 @@ export function chainIdFor(network: string): number {
   return CHAIN_IDS[network] ?? 1;
 }
 
-export function domainFor(network: string): TypedDataDomain {
+/**
+ * The domain name a debug session signs under. A dry-run claim rests on faked holdings, so it
+ * must never be capable of verifying as real evidence: signing it under its own domain makes
+ * that structural rather than a matter of whoever reads the JSON noticing a flag. The signer
+ * sees this string in the wallet prompt, which is the last moment a mistake is still cheap.
+ */
+export const DEBUG_DOMAIN_NAME = 'Wildcat Claims [DEBUG - NOT EVIDENCE]';
+
+export function domainFor(network: string, debug = false): TypedDataDomain {
   return {
-    name: 'Wildcat Claims',
+    name: debug ? DEBUG_DOMAIN_NAME : 'Wildcat Claims',
     version: '1',
     chainId: chainIdFor(network),
   };
 }
+
+/** The banner a debug session prepends to the personal_sign text, which carries no domain. */
+export const DEBUG_SIGNATURE_BANNER =
+  '*** DEBUG DRY RUN - holdings are faked, this is NOT a valid claim ***';
 
 /** EIP-712 type definitions, exported so the frontend can build identical typed data. */
 export const EIP712_TYPES = {
@@ -215,8 +227,13 @@ const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
   },
 });
 
-export const toSignatureString = (form: FormData, claim: SignedClaimContext): string =>
+export const toSignatureString = (
+  form: FormData,
+  claim: SignedClaimContext,
+  debug = false
+): string =>
   [
+    ...(debug ? [DEBUG_SIGNATURE_BANNER] : []),
     `name: ${form.name || ''}`,
     `email: ${form.email || ''}`,
     `other: ${form.other || ''}`,
@@ -253,20 +270,38 @@ export function recoverTypedSigner(
 export function verifySignature(
   form: FormData,
   claim: SignedClaimContext,
-  signature: string
+  signature: string,
+  debug = false
 ): string {
   if (signature.includes('personal_sign_')) {
-    return verifyMessage(toSignatureString(form, claim), signature.replace('personal_sign_', ''));
+    return verifyMessage(
+      toSignatureString(form, claim, debug),
+      signature.replace('personal_sign_', '')
+    );
   }
-  return verifyTypedData(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim), signature);
+  return verifyTypedData(
+    domainFor(claim.network, debug),
+    EIP712_TYPES,
+    toTypedValue(form, claim),
+    signature
+  );
 }
 
 /**
  * The 32-byte digest the lender signed — the value an EIP-1271 wallet (e.g. a Safe) checks via
  * isValidSignature. EIP-712 path: the typed-data hash; personal_sign path: the EIP-191 message hash.
  */
-export function claimDigest(form: FormData, claim: SignedClaimContext, signature: string): string {
+export function claimDigest(
+  form: FormData,
+  claim: SignedClaimContext,
+  signature: string,
+  debug = false
+): string {
   return signature.includes('personal_sign_')
-    ? hashMessage(toSignatureString(form, claim))
-    : TypedDataEncoder.hash(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim));
+    ? hashMessage(toSignatureString(form, claim, debug))
+    : TypedDataEncoder.hash(
+        domainFor(claim.network, debug),
+        EIP712_TYPES,
+        toTypedValue(form, claim)
+      );
 }

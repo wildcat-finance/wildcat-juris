@@ -74,7 +74,7 @@
         <p>Find an affected market by its borrower, then connect the wallet you lent with to produce a signed proof of your eligibility as an impacted lender.</p>
       </header>
 
-      <div id="debugBanner" class="banner hidden">⚠ DEBUG MODE — eligibility is faked (any lender is assumed to hold ≥100 of the underlying). For testing the signing flow only.</div>
+      <div id="debugBanner" class="banner hidden">⚠ DEBUG SESSION — eligibility is faked (any lender is assumed to hold ≥100 of the underlying) and anything signed here goes under a separate <code>[DEBUG - NOT EVIDENCE]</code> domain, so it cannot verify as a real claim. Dry runs only. End it by loading <code>#dbg=off</code>.</div>
 
       <div class="card">
         <h2>Context</h2>
@@ -735,7 +735,28 @@ and upload this .zip (or paste the two files). The verifier will:
 
       renderUndertaking();
       sha256Hex(AGREEMENT).then((h) => { agreementSha = h; renderUndertaking(); });
-      loadConfig().then(trySafeApp);
+      // A debug session is opened by fragment rather than by a route: load the normal page as
+      // /#dbg=<key> (or #dbg=off to end one). Fragments are never sent to a server, so the
+      // secret stays out of access logs, Referer headers and proxy caches; we hand it over once
+      // in a POST, wipe it from the URL and history, and carry on. Nothing on the page hints
+      // that this exists, and with no DEBUG_KEY deployed the endpoint 404s like a dead route.
+      async function claimDebugFragment() {
+        const m = /(?:^|[#&])dbg=([^&]*)/.exec(location.hash || "");
+        if (!m) return;
+        const raw = decodeURIComponent(m[1] || "");
+        history.replaceState(null, "", location.pathname + location.search);
+        const body = raw === "off" ? { end: true } : { key: raw };
+        try {
+          await fetch("/debug/session", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify(body),
+          });
+        } catch (_) { /* a failed activation is just a normal visit */ }
+      }
+
+      claimDebugFragment().then(loadConfig).then(trySafeApp);
       initCountries();
     </script>
   </body>
