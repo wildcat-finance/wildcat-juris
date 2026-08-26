@@ -17,9 +17,21 @@ So there's nothing to "build" beyond installing dependencies — the function is
 
 ## RPC: the Wildcat archive node is integrated by default
 
-The app defaults to the Wildcat mainnet archive node (`https://eth-main.hinterlight.net/`,
-baked into `src/wildcat/config.ts`), so the hosted deployment works without setting `RPC_URL`.
-You can still override it by setting `RPC_URL` in the Vercel environment.
+The app defaults to the Wildcat gateway (`https://rpc.wildcat.finance/<chainId>` — `/1` for
+mainnet — baked into `src/wildcat/config.ts`). Two things about that endpoint: it is
+**authenticated**, so set `RPC_BEARER_TOKEN` or every read fails with a 401 in about 0.1s and the
+app will say so by name; and it **routes by chain id**, so the bare host answers
+`404 {"error":"route not found"}` even with a valid token.
+
+Measured through it, with a token: 86 registered markets, 32 distinct borrowers, and
+`getBorrowerMarkets()` for the busiest (17 markets) end to end in 237ms — against the 30s function
+budget. Archive reads work too (`eth_getBalance` at block 20,000,000 in 0.13s), which
+`verifyClaimAtBlock` needs. Override the endpoint with
+`RPC_URL` if you need a different archive node.
+
+The previous default, `eth-main.hinterlight.net`, is open but was observed serving header methods
+only — `eth_blockNumber` in 0.26s while `eth_getBalance`, `eth_getCode` and `eth_call` each stalled
+20s and returned a gateway error. See **When market lookup fails** below.
 
 The one thing to verify: the function runs in Vercel's cloud, so **that node must be reachable
 from Vercel's egress**. If it's network-restricted, either allowlist Vercel or set `RPC_URL` to
@@ -58,7 +70,8 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `RPC_URL` | no | Wildcat archive node | Ethereum RPC the function calls. Defaults to `eth-main.hinterlight.net`; override if needed. Must be reachable from Vercel. |
+| `RPC_URL` | no | `https://rpc.wildcat.finance/<chainId>` | Ethereum RPC the function calls. Must be reachable from Vercel. |
+| `RPC_BEARER_TOKEN` | **yes** for the default | — | Bearer token for the Wildcat gateway. Without it every read is a 401. Not needed for an open `RPC_URL`. |
 | `WILDCAT_NETWORK` | no | `mainnet` | `mainnet` or `sepolia` (selects baked-in contract addresses + chainId). |
 | `BORROWER_ADDRESS` | no | — | Pre-fills the borrower field on the page. |
 | `DEFAULT_BUFFER_DAYS` | no | `90` | "In default" = `timeDelinquent ≥ grace + this many days`. |
@@ -67,6 +80,7 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 | `LENS_MODE` | no | `lens` | `lens` (MarketLensV2) or `direct` (`balanceOf`) for the held read. |
 | `DEBUG_MODE` | no | `false` | **Keep off in production.** Fakes holdings + relaxes the default gate, for every visitor at once. |
 | `DEBUG_KEY` | no | — | Long random secret (≥24 chars) enabling per-browser debug sessions via `/#dbg=<key>`. Safe to set in production; unset makes sessions unreachable. |
+| `RPC_TIMEOUT_MS` | no | `8000` | Per-request RPC timeout. Keep well under `maxDuration` so a stalled node returns a 503, not a function timeout. |
 | `SNAPSHOT_BLOCK` | no | — | Pin all reads to a block (needs an archive node). Unset = live. |
 | `MULTICALL3` | no | canonical | Multicall3 address; only override if your chain uses a non-standard one. |
 
@@ -93,6 +107,27 @@ Nothing on the page advertises this, and with `DEBUG_KEY` unset (or under 24 cha
 Claims signed inside a session use a distinct EIP-712 domain, `Wildcat Claims [DEBUG - NOT
 EVIDENCE]` — visible in the wallet prompt — so a dry-run proof will not verify against the
 production domain and cannot be mistaken for, or submitted as, a real claim.
+
+## When market lookup fails
+
+`FUNCTION_INVOCATION_TIMEOUT`, or a 503 saying the Ethereum node is not answering, almost always
+means the RPC is up but not serving **state**. A node can keep answering header methods
+(`eth_blockNumber`, `eth_getBlockByNumber`) in milliseconds while `eth_call`, `eth_getCode` and
+`eth_getBalance` all stall — which looks like a broken app, because market discovery is the first
+thing that needs state.
+
+Check which half is broken in one request:
+
+```
+curl https://<your-deployment>/health?deep=1
+```
+
+`rpc.header.ok` covers a header read, `rpc.state.ok` the cheapest possible state read, and
+`rpc.authenticated` says whether a bearer token is configured. Header true with state false is the
+case above: the node needs attention, or point `RPC_URL` at another archive endpoint. Both false
+with `authenticated: false` against an authenticated gateway means `RPC_BEARER_TOKEN` is missing —
+the app reports that case separately, so it is never confused with a node fault. Against the node directly, the same split shows as `eth_blockNumber` returning `200` while
+`eth_getBalance` on the zero address hangs and then returns a gateway error.
 
 ## How requests are routed
 

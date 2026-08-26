@@ -47,6 +47,23 @@ export interface WildcatConfig {
   lensMode: LensMode;
 
   /**
+   * Per-request RPC timeout in ms. Must stay well under the serverless function's maxDuration
+   * (30s in vercel.json), because ethers' own default is 300s: a node that accepts connections
+   * and answers header methods but stalls on state reads would otherwise consume the whole
+   * function budget and surface as an opaque FUNCTION_INVOCATION_TIMEOUT rather than a
+   * diagnosable RPC error. Env: RPC_TIMEOUT_MS.
+   */
+  rpcTimeoutMs: number;
+
+  /**
+   * Bearer token for an authenticated RPC gateway. rpc.wildcat.finance sits behind one
+   * (`WWW-Authenticate: Bearer realm="wildcat-gateway"`) and answers 401 in ~0.1s without it,
+   * so a missing token is a configuration error the app should name rather than a node fault.
+   * Env: RPC_BEARER_TOKEN. Unset is correct for an open endpoint.
+   */
+  rpcBearerToken?: string;
+
+  /**
    * DEBUG (testing only): when true, any lender being checked is assumed to hold >= 100 of
    * the underlying in every market, so testers can exercise the claim-signing flow without a
    * real position. Signatures are still verified normally. Env: DEBUG_MODE. Off in production.
@@ -112,14 +129,18 @@ export function loadConfig(): WildcatConfig {
     multicall3: getAddress(process.env.MULTICALL3 ?? base.multicall3),
   };
 
+  const chainId = network === 'sepolia' ? 11155111 : 1;
   const lensMode: LensMode = (process.env.LENS_MODE ?? 'lens') === 'direct' ? 'direct' : 'lens';
   const bufferDays = Number(process.env.DEFAULT_BUFFER_DAYS ?? '90');
 
   return {
     network,
-    chainId: network === 'sepolia' ? 11155111 : 1,
-    // Defaults to the Wildcat mainnet archive node; override with the RPC_URL env var.
-    rpcUrl: process.env.RPC_URL || 'https://eth-main.hinterlight.net/',
+    chainId,
+    // The Wildcat gateway, which keys its routes by chain id — `/` is a 404 ("route not
+    // found") even with a valid token. Authenticated: see rpcBearerToken. Override with
+    // RPC_URL. The previous default, eth-main.hinterlight.net, is open but was serving
+    // header methods only, with every state read stalling 20s into a gateway error.
+    rpcUrl: process.env.RPC_URL || `https://rpc.wildcat.finance/${chainId}`,
     addresses,
     defaultBufferSec: Math.floor(bufferDays * DAY_SEC),
     borrower: process.env.BORROWER_ADDRESS ? getAddress(process.env.BORROWER_ADDRESS) : undefined,
@@ -127,6 +148,8 @@ export function loadConfig(): WildcatConfig {
     includeWithdrawals: (process.env.INCLUDE_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,
+    rpcTimeoutMs: Math.max(1_000, Number(process.env.RPC_TIMEOUT_MS ?? '8000') || 8_000),
+    rpcBearerToken: (process.env.RPC_BEARER_TOKEN ?? '').trim() || undefined,
     debugMode: ['1', 'true', 'yes'].includes((process.env.DEBUG_MODE ?? '').toLowerCase()),
     // A short key is worse than none: it invites guessing at a gate that fakes eligibility.
     debugKey: (process.env.DEBUG_KEY ?? '').trim().length >= 24

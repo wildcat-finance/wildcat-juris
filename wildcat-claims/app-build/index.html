@@ -161,7 +161,11 @@
         </div>
       </div>
 
-      <details class="card" id="verifyCard">
+      <!-- Hidden during the claim itself: a lender walking through this has nothing to verify
+           yet, and the section only invites confusion about whose job it is. Revealed once a
+           proof exists (end of submit), and reachable directly at /#verify for the Foundation,
+           who arrives holding someone else's proof and never runs the flow at all. -->
+      <details class="card hidden" id="verifyCard">
         <summary><h2>Foundation · verify a submitted proof</h2></summary>
 
         <div class="explain">
@@ -516,7 +520,7 @@
             `Signed no earlier than that block; the server logged receipt at ${esc(out.submittedAt)}. ` +
             `The signature also commits to <b>${esc(agreementSha)}</b> \u2014 the SHA-256 of the Qualifying Lender ` +
             `undertaking and definitions shown above, which the server recomputes from its own copy of that text.` +
-            (out.debug ? ` <b style="color:var(--accent-2)">⚠ DEBUG: the held amount was assumed (not a real balance) — disable DEBUG_MODE for a real attestation.</b>` : "");
+            (out.debug ? ` <b style="color:var(--accent-2)">⚠ DEBUG SESSION: the held amount was assumed (not a real balance), and this was signed under the [DEBUG - NOT EVIDENCE] domain, so it cannot verify as a real claim. End the session with #dbg=off before attesting for real.</b>` : "");
 
           // Receipt: the exact signed payload + proof the signature verifies, both copyable.
           let recovered = "";
@@ -533,6 +537,8 @@
           $("signedPre").textContent = JSON.stringify(lastSigned, null, 2);
           $("proofPre").textContent = JSON.stringify(lastProof, null, 2);
           show($("receipt"));
+          // The process is complete: verification is now something the reader can act on.
+          show($("verifyCard"));
           $("receipt").querySelectorAll(".copybtn").forEach((b) => {
             const label = b.textContent;
             b.onclick = async () => {
@@ -758,6 +764,12 @@ and upload this .zip (or paste the two files). The verifier will:
       // secret stays out of access logs, Referer headers and proxy caches; we hand it over once
       // in a POST, wipe it from the URL and history, and carry on. Nothing on the page hints
       // that this exists, and with no DEBUG_KEY deployed the endpoint 404s like a dead route.
+      // The fragment carries out-of-band requests (a debug key, the verifier). Parsed once, and
+      // without a regex, so the escaping cannot be got subtly wrong.
+      function fragmentFlags() {
+        return (location.hash || "").replace(/^#/, "").split("&").map((p) => p.split("=")[0]);
+      }
+
       async function claimDebugFragment() {
         const m = /(?:^|[#&])dbg=([^&]*)/.exec(location.hash || "");
         if (!m) return;
@@ -774,7 +786,18 @@ and upload this .zip (or paste the two files). The verifier will:
         } catch (_) { /* a failed activation is just a normal visit */ }
       }
 
-      claimDebugFragment().then(loadConfig).then(trySafeApp);
+      // The Foundation verifies proofs it was sent, so it needs the section without having
+      // produced anything: /#verify opens it directly. Left out of the page's own navigation
+      // so a lender mid-claim is not steered into someone else's task.
+      function revealVerifyOnRequest() {
+        if (!fragmentFlags().includes("verify")) return;
+        const card = $("verifyCard");
+        show(card);
+        card.open = true;
+        card.scrollIntoView({ block: "start" });
+      }
+
+      claimDebugFragment().then(loadConfig).then(trySafeApp).then(revealVerifyOnRequest);
       initCountries();
     </script>
   </body>
