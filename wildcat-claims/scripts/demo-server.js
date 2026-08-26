@@ -18,6 +18,9 @@ const {
   chainIdFor,
   domainFor,
   QUALIFYING_LENDER_UNDERTAKING,
+  QUALIFYING_LENDER_DEFINITION_LIST,
+  QUALIFYING_LENDER_AGREEMENT,
+  QUALIFYING_LENDER_AGREEMENT_SHA256,
 } = require('../dist/utils');
 
 // ---- Dummy config + mock chain -------------------------------------------
@@ -81,7 +84,11 @@ app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
 app.get('/config', (_req, res) => res.json({
   network: cfg.network, chainId: chainIdFor(cfg.network), borrower: cfg.borrower,
   defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400), domain: domainFor(cfg.network),
-  undertaking: QUALIFYING_LENDER_UNDERTAKING, debug: cfg.debugMode,
+  undertaking: QUALIFYING_LENDER_UNDERTAKING,
+  undertakingDefinitions: QUALIFYING_LENDER_DEFINITION_LIST,
+  undertakingAgreement: QUALIFYING_LENDER_AGREEMENT,
+  undertakingSha256: QUALIFYING_LENDER_AGREEMENT_SHA256,
+  debug: cfg.debugMode,
 }));
 
 app.post('/markets', async (req, res) => {
