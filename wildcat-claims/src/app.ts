@@ -5,7 +5,7 @@ import path from 'path';
 import { getAddress } from 'ethers';
 
 import { loadConfig } from './wildcat/config';
-import { Chain } from './wildcat/chain';
+import { Chain, isRpcTransportError } from './wildcat/chain';
 import { Eligibility } from './wildcat/eligibility';
 import { verifyProof } from './verifyProof';
 import {
@@ -93,7 +93,47 @@ export function createApp(): Express {
   app.use(cors());
   app.use(express.json());
 
-  app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
+  /**
+   * Answer a chain-read failure. A node that is not responding is a 503 naming itself, not a
+   * generic 500: the previous behaviour let a stalled node reach the user as the platform's
+   * own FUNCTION_INVOCATION_TIMEOUT page, which says nothing about where to look.
+   */
+  const chainError = (res: Response, err: any, fallback: string) =>
+    isRpcTransportError(err)
+      ? res
+          .status(503)
+          .send(
+            `The Ethereum node is not answering (${err.shortMessage ?? err.message}). ` +
+              'Every market read needs it, so nothing can be looked up until it recovers. ' +
+              'If this persists, check the node or set RPC_URL to another archive endpoint.'
+          )
+      : res.status(500).send(fallback);
+
+  // ?deep=1 also probes the node with the cheapest possible STATE read. Header methods
+  // (eth_blockNumber) can keep answering while state access is down, which is exactly the
+  // failure that looks like a broken app rather than a broken node.
+  app.get('/health', async (req: Request, res: Response) => {
+    const base = { ok: true, network: cfg.network };
+    if (req.query.deep === undefined) return res.json(base);
+    const probe = async (label: string, fn: () => Promise<unknown>) => {
+      const started = Date.now();
+      try {
+        await fn();
+        return { label, ok: true, ms: Date.now() - started };
+      } catch (err: any) {
+        return { label, ok: false, ms: Date.now() - started, error: err.shortMessage ?? err.message };
+      }
+    };
+    const header = await probe('eth_blockNumber', () => chain.provider.getBlockNumber());
+    const state = await probe('eth_getCode (state read)', () =>
+      chain.isContract(cfg.addresses.archController)
+    );
+    return res.json({
+      ...base,
+      ok: header.ok && state.ok,
+      rpc: { url: cfg.rpcUrl, timeoutMs: cfg.rpcTimeoutMs, header, state },
+    });
+  });
 
   // Public config the frontend needs to render context and build EIP-712 typed data.
   app.get('/config', (req: Request, res: Response) =>
@@ -124,7 +164,7 @@ export function createApp(): Express {
       return res.json({ borrower, markets: await eligibility.getBorrowerMarkets(borrower) });
     } catch (err: any) {
       console.error(`/markets ${borrower}:`, err.message);
-      return res.status(500).send('Failed to load borrower markets');
+      return chainError(res, err, 'Failed to load borrower markets');
     }
   });
 
@@ -151,7 +191,7 @@ export function createApp(): Express {
       });
     } catch (err: any) {
       console.error(`/eligibility ${account}/${market}:`, err.message);
-      return res.status(500).send('Failed to compute eligibility');
+      return chainError(res, err, 'Failed to compute eligibility');
     }
   });
 

@@ -67,6 +67,7 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 | `LENS_MODE` | no | `lens` | `lens` (MarketLensV2) or `direct` (`balanceOf`) for the held read. |
 | `DEBUG_MODE` | no | `false` | **Keep off in production.** Fakes holdings + relaxes the default gate, for every visitor at once. |
 | `DEBUG_KEY` | no | — | Long random secret (≥24 chars) enabling per-browser debug sessions via `/#dbg=<key>`. Safe to set in production; unset makes sessions unreachable. |
+| `RPC_TIMEOUT_MS` | no | `8000` | Per-request RPC timeout. Keep well under `maxDuration` so a stalled node returns a 503, not a function timeout. |
 | `SNAPSHOT_BLOCK` | no | — | Pin all reads to a block (needs an archive node). Unset = live. |
 | `MULTICALL3` | no | canonical | Multicall3 address; only override if your chain uses a non-standard one. |
 
@@ -93,6 +94,25 @@ Nothing on the page advertises this, and with `DEBUG_KEY` unset (or under 24 cha
 Claims signed inside a session use a distinct EIP-712 domain, `Wildcat Claims [DEBUG - NOT
 EVIDENCE]` — visible in the wallet prompt — so a dry-run proof will not verify against the
 production domain and cannot be mistaken for, or submitted as, a real claim.
+
+## When market lookup fails
+
+`FUNCTION_INVOCATION_TIMEOUT`, or a 503 saying the Ethereum node is not answering, almost always
+means the RPC is up but not serving **state**. A node can keep answering header methods
+(`eth_blockNumber`, `eth_getBlockByNumber`) in milliseconds while `eth_call`, `eth_getCode` and
+`eth_getBalance` all stall — which looks like a broken app, because market discovery is the first
+thing that needs state.
+
+Check which half is broken in one request:
+
+```
+curl https://<your-deployment>/health?deep=1
+```
+
+`rpc.header.ok` covers a header read, `rpc.state.ok` the cheapest possible state read. Header true
+with state false is the case above: the node needs attention, or point `RPC_URL` at another archive
+endpoint. Against the node directly, the same split shows as `eth_blockNumber` returning `200` while
+`eth_getBalance` on the zero address hangs and then returns a gateway error.
 
 ## How requests are routed
 

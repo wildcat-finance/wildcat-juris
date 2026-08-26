@@ -47,6 +47,15 @@ export interface WildcatConfig {
   lensMode: LensMode;
 
   /**
+   * Per-request RPC timeout in ms. Must stay well under the serverless function's maxDuration
+   * (30s in vercel.json), because ethers' own default is 300s: a node that accepts connections
+   * and answers header methods but stalls on state reads would otherwise consume the whole
+   * function budget and surface as an opaque FUNCTION_INVOCATION_TIMEOUT rather than a
+   * diagnosable RPC error. Env: RPC_TIMEOUT_MS.
+   */
+  rpcTimeoutMs: number;
+
+  /**
    * DEBUG (testing only): when true, any lender being checked is assumed to hold >= 100 of
    * the underlying in every market, so testers can exercise the claim-signing flow without a
    * real position. Signatures are still verified normally. Env: DEBUG_MODE. Off in production.
@@ -127,6 +136,7 @@ export function loadConfig(): WildcatConfig {
     includeWithdrawals: (process.env.INCLUDE_WITHDRAWALS ?? 'true').toLowerCase() !== 'false',
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,
+    rpcTimeoutMs: Math.max(1_000, Number(process.env.RPC_TIMEOUT_MS ?? '8000') || 8_000),
     debugMode: ['1', 'true', 'yes'].includes((process.env.DEBUG_MODE ?? '').toLowerCase()),
     // A short key is worse than none: it invites guessing at a gate that fakes eligibility.
     debugKey: (process.env.DEBUG_KEY ?? '').trim().length >= 24

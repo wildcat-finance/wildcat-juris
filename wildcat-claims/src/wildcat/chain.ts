@@ -1,4 +1,4 @@
-import { Contract, Interface, JsonRpcProvider, Network, type BlockTag } from 'ethers';
+import { Contract, FetchRequest, Interface, JsonRpcProvider, Network, type BlockTag } from 'ethers';
 import { WildcatConfig } from './config';
 import { ARCH_CONTROLLER_ABI, MARKET_ABI, ERC20_ABI, LENS_ABI, MULTICALL3_ABI } from './abis';
 
@@ -31,6 +31,18 @@ export interface MarketState {
 
 const MARKETS_PAGE = 100n;
 
+/**
+ * Did the RPC endpoint itself fail us — timeout, gateway error, connection refused — rather
+ * than the contract returning something we could not use? The distinction decides whether a
+ * retry is worth the remaining function budget, and whether the caller should be told the node
+ * is down rather than that their input was bad.
+ */
+const RPC_TRANSPORT_CODES = new Set(['TIMEOUT', 'SERVER_ERROR', 'NETWORK_ERROR', 'CANCELLED']);
+export function isRpcTransportError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && RPC_TRANSPORT_CODES.has(code);
+}
+
 export class Chain {
   readonly provider: JsonRpcProvider;
   readonly arch: Contract;
@@ -47,7 +59,10 @@ export class Chain {
     // Pin to a static network: the chain id is known, so skip auto-detection (which
     // otherwise retries forever if the RPC misbehaves) and fail fast on a bad endpoint.
     const network = Network.from(cfg.chainId);
-    this.provider = new JsonRpcProvider(cfg.rpcUrl, network, { staticNetwork: network });
+    // Bound every request: ethers defaults to 300s, ten times the serverless budget.
+    const endpoint = new FetchRequest(cfg.rpcUrl);
+    endpoint.timeout = cfg.rpcTimeoutMs;
+    this.provider = new JsonRpcProvider(endpoint, network, { staticNetwork: network });
     this.arch = new Contract(cfg.addresses.archController, ARCH_CONTROLLER_ABI, this.provider);
     this.lens = new Contract(cfg.addresses.marketLens, LENS_ABI, this.provider);
     this.multicall = new Contract(cfg.addresses.multicall3, MULTICALL3_ABI, this.provider);
@@ -107,7 +122,12 @@ export class Chain {
     const tag = this.blockTag();
     try {
       return await this.arch['getRegisteredMarkets()']({ blockTag: tag });
-    } catch {
+    } catch (err) {
+      // The paged overload is a fallback for a deployment where the no-arg one is unusable —
+      // NOT a retry for a node that failed to answer. Retrying a transport failure doubles the
+      // wait, and two timeouts exceed the function's budget, so a diagnosable RPC error
+      // reaches the user as an unexplained platform timeout instead. Surface it as it is.
+      if (isRpcTransportError(err)) throw err;
       const count: bigint = await this.arch.getRegisteredMarketsCount({ blockTag: tag });
       const markets: string[] = [];
       for (let i = 0n; i < count; i += MARKETS_PAGE) {
