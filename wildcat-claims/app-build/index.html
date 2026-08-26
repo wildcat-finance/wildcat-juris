@@ -342,8 +342,19 @@
 
       // ---- 2 · wallet ----------------------------------------------------------
       $("connectBtn").addEventListener("click", async () => {
-        if (safeMode) return; // already connected as a Safe
-        if (!window.ethereum) return setStatus($("connectStatus"), "No Ethereum wallet detected.", "err");
+        // Every branch below reports something. A button that silently does nothing is
+        // indistinguishable from a broken page.
+        if (safeMode) {
+          return setStatus($("connectStatus"), "Already connected as a Safe — sign with your owners.", "");
+        }
+        if (!window.ethereum) {
+          return setStatus(
+            $("connectStatus"),
+            "No injected wallet found. Unlock MetaMask (or another extension wallet) and reload; " +
+              "if it is installed, check it has permission to run on this site.",
+            "err"
+          );
+        }
         try {
           provider = new BrowserProvider(window.ethereum);
           const accts = await provider.send("eth_requestAccounts", []);
@@ -360,6 +371,11 @@
       // When opened inside Safe{Wallet} as a Custom App, auto-connect to the Safe. Signing then
       // routes to the Safe's owners and produces an EIP-1271 signature the server accepts.
       async function trySafeApp() {
+        // A Safe App is loaded by Safe{Wallet} INSIDE an iframe. Standalone, window.parent is
+        // this same window, so getInfo() posts its handshake to itself — and anything that
+        // answers it flips safeMode on a page that is not in a Safe at all, disabling the
+        // connect button and making its handler a silent no-op. Not in a frame, not a Safe.
+        if (window.self === window.top) return;
         try {
           const sdk = new SafeAppsSDK();
           const info = await Promise.race([
