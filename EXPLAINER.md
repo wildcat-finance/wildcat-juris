@@ -1,133 +1,142 @@
-# juris.ndx.fi — Technical Explainer
+# Wildcat Juris — Technical Explainer
 
 ## What this is
 
-`juris.ndx.fi` is a small Node/TypeScript web service built for **Indexed Finance (ndx.fi)** in the aftermath of the **October 2021 exploit** (the affected state is read at Ethereum block `13417849`). It is a **victim-registration / claim-intake tool**.
+A Node/TypeScript service that lets a **lender in a Wildcat V2 market** produce a signed,
+independently verifiable proof that they held a position in that market, for submission to the
+**Wildcat Foundation** as impacted-lender eligibility evidence.
 
-It lets a wallet holder who was exposed to the affected Indexed Finance index tokens:
+The flow a lender walks:
 
-1. Check whether their address was affected and how much they lost (computed on-chain at the exploit block).
-2. Cryptographically prove ownership of that address by signing a form with their Ethereum wallet.
-3. Submit contact details, location, and consent flags (willingness to talk to law enforcement / to join litigation) for a coordinated legal recovery effort.
+1. Enter a **borrower** address; the service discovers that borrower's markets on-chain and reports
+   each one's delinquency state.
+2. Pick a market and connect the wallet that lent to it. The service reads the position **pinned to
+   one block** and returns the figures that will be attested.
+3. Agree to the **Qualifying Lender undertaking** (confidentiality over the borrower's Identifying
+   Particulars) and sign. The signature commits to the claim figures and to the SHA-256 of the
+   undertaking text.
+4. Download the proof as two JSON files, or one `.zip`.
 
-Submissions are persisted to a local key/value database and mirrored into a Google Sheet that the legal/coordination team works from.
+Nothing is persisted. There is no database and no spreadsheet: the output is the proof itself,
+which anyone holding it can re-verify against an archive node.
 
-The name reflects the purpose: *juris* (legal) for *ndx.fi* — a jurisdiction/legal-claim collection front-end.
+> **On the name.** This repository began as a fork of `juris.ndx.fi`, a claim-intake tool built for
+> Indexed Finance after the October 2021 exploit. None of that codebase remains — the on-chain
+> logic, the form, the storage layer and the frontend were all replaced when it was retargeted to
+> Wildcat V2. The name is the only inheritance.
 
 ## Repository layout
 
 ```
-juris.ndx.fi-master/
-├── package.json          # deps; no build/start scripts — tsc + node directly
-├── tsconfig.json         # CommonJS, ES5 target, outDir ./dist, baseUrl src
-├── yarn.lock
-├── .gitignore            # .env, .google.json, node_modules/, src/.db/  (secrets/data not committed)
-├── app-build/            # pre-built React frontend (static), served in production
-│   ├── index.html
-│   └── static/js/*.chunk.js
-└── src/
-    ├── index.ts          # Express server + HTTP API (entry point)
-    ├── balance-check.ts  # "was this address affected, and how much did it lose?"
-    ├── typechain/        # ethers contract bindings + on-chain balance reads
-    │   ├── index.ts      # provider, staking contract, getAffectedBalance()
-    │   ├── IERC20.d.ts
-    │   ├── MultiTokenStaking.d.ts
-    │   └── commons.ts
-    ├── abi/              # IERC20.json, MultiTokenStaking.json
-    ├── utils.ts          # form validation + EIP-712 / personal_sign verification
-    ├── database.ts       # account store API over SimpleLevel
-    ├── simple-level.ts   # JSON-serializing wrapper around LevelDB (mem or disk)
-    ├── sheets.ts         # Google Sheets mirror of submissions
-    └── httpRedirect.ts   # port-80 → HTTPS redirect helper
+wildcat-juris/
+├── EXPLAINER.md                    # this file
+├── DEPLOY_VERCEL.md                # deployment runbook + env reference
+├── SAFE_MULTISIG.md                # signing as a Safe (EIP-1271)
+├── README.md, WILDCAT_PROTOCOL_ARCHITECTURE.md, JURIS_WILDCAT_ADAPTATION_SPEC.md
+└── wildcat-claims/                 # the application
+    ├── vercel.json                 # rewrites every path to api/index.ts
+    ├── api/index.ts                # Vercel serverless entrypoint
+    ├── app-build/index.html        # the entire frontend: one self-contained file
+    ├── examples/                   # signed example proofs, pinned by test
+    ├── scripts/
+    │   ├── demo-server.js          # real code paths against a mock chain
+    │   ├── generate-proof-examples.ts
+    │   └── prove-safe-eip1271.js
+    ├── src/
+    │   ├── index.ts                # local/self-hosted entrypoint (TLS in MODE=production)
+    │   ├── app.ts                  # createApp(): all routes
+    │   ├── utils.ts                # the undertaking, EIP-712 types, form validation, recovery
+    │   ├── verifyProof.ts          # the verifier, shared by app.ts and demo-server.js
+    │   ├── debugSession.ts         # per-browser debug sessions
+    │   ├── httpRedirect.ts         # port 80 → HTTPS
+    │   └── wildcat/
+    │       ├── config.ts           # env → WildcatConfig, deployment addresses
+    │       ├── abis.ts             # ArchController, market, MarketLensV2, Multicall3, ERC-20
+    │       ├── chain.ts            # all RPC access, batched via Multicall3
+    │       └── eligibility.ts      # market discovery + the claim/verify derivations
+    └── test/                       # vitest
 ```
 
 ## Architecture & data flow
 
-The backend is a single Express app (`src/index.ts`) that both serves the static React frontend and exposes two JSON endpoints. The frontend (in `app-build/`) collects the form, asks the user's wallet to sign it, and posts to the backend.
+One Express app serves both the single-page frontend and the JSON API. On Vercel it runs as a
+single serverless function; locally `src/index.ts` listens directly.
 
 ```
-Browser (React app in app-build/)
-   │  POST /affected-tokens { account }
+Browser (app-build/index.html — one file, no build step)
+   │  GET  /config                    domain, chainId, undertaking text + digest, debug flag
+   │  POST /markets    { borrower }
    ▼
-Express (index.ts) ──► balance-check.affectedTokens(account)
-   │                         └─► typechain.getAffectedBalance(token, account)
-   │                                 ├─ IERC20.balanceOf(account)        @ block 13417849
-   │                                 └─ MultiTokenStaking.userInfo(i, …) @ block 13417849   (Alchemy mainnet)
+app.ts ──► Eligibility.getBorrowerMarkets(borrower)
+   │          ├─ Chain.getAllMarkets()            ArchController registry
+   │          ├─ Chain.readBorrowers(markets)      one Multicall3 eth_call
+   │          └─ Chain.readMarketsInfoAndState()   one more, for the matches
    │
-   │  POST /submit { data, signature }
+   │  POST /eligibility { account, market }
    ▼
-Express (index.ts)
-   ├─ utils.getFormDataError(data)          validate country/state/city, contact, consent
-   ├─ utils.verifySignature(data, sig)      recover signer address (EIP-712 typed-data or personal_sign)
-   ├─ balance-check.affectedTokens(addr)    re-check on-chain; reject if not affected
-   ├─ database.putAccount(account)          persist to LevelDB
-   └─ sheets.addAccount(account)            upsert row into Google Sheet
+app.ts ──► Eligibility.eligibleClaim(account, market, debug?)
+   │          resolves asOfBlock FIRST, then pins every read to it
+   │
+   │  POST /submit { account, data, signature }
+   ▼
+app.ts ──► signature check: ECDSA recovery, or EIP-1271 for a contract wallet
+   │       ──► Eligibility.eligibleClaim() again, server-side — the client is never trusted
+   │       ──► returns a receipt; nothing is stored
+   │
+   │  POST /verify { signed, proof }
+   ▼
+verifyProof.ts ──► four layers (below)
 ```
 
-### Endpoints (`src/index.ts`)
+### Routes (`src/app.ts`)
 
-- **`POST /affected-tokens`** — body `{ account }`. Returns the list of affected tokens for that address with per-token balance and estimated lost value. Used by the frontend to show "you were affected" before asking for a signature.
-- **`POST /submit`** — body `{ data, signature }`. Validates the form, verifies the wallet signature to recover the signer's address, re-confirms on-chain that the address was actually affected (so people can't register losses they didn't have), computes total estimated loss, then writes to both LevelDB and the Google Sheet.
+| route | purpose |
+|---|---|
+| `GET /health` | liveness. `?deep=1` also probes a header read and a state read separately |
+| `GET /config` | what the page needs to render and to build identical typed data |
+| `POST /markets` | a borrower's markets, with live delinquency state |
+| `POST /eligibility` | one lender against one market; returns the claim context to sign |
+| `POST /submit` | verify signature, re-check eligibility live, return the proof |
+| `POST /verify` | re-verify a produced proof (see below) |
+| `POST /debug/session` | open/close a debug session; 404s when `DEBUG_KEY` is unset |
+| `GET /manifest.json`, `GET /icon.svg` | Safe App manifest, so a Safe can load this as a Custom App |
+| `GET *` | the frontend |
 
-Serving: in production (`MODE=production`) it serves the static `app-build/` directory over HTTPS on port 443 using Let's Encrypt certs read from `/etc/letsencrypt/live/juris.ndx.fi/`, and runs a companion port-80 → HTTPS redirect server. In dev it serves `build/` over plain HTTP on port 3001.
+## Eligibility (`src/wildcat/eligibility.ts`)
 
-### On-chain affected-balance logic (`balance-check.ts` + `typechain/index.ts`)
+`eligibleClaim` resolves `asOfBlock` **before** reading anything and pins every read to it. Reading
+at `latest` while stamping a separately-fetched block number would let the figures come from a
+different block than the signature commits to, so an honest lender's proof would fail archive
+replay — interest accrues per second, and held/withdrawal amounts could straddle a
+`queueWithdrawal`.
 
-A hard-coded list of six affected market tokens (e.g. `DEFI5`, `CC10`, `FFF` and their `*-ETH` Sushi pairs) each carry a `lossPerToken` USD figure. For a given account, `getAffectedBalance` reads, **at the fixed exploit block `13417849`**:
+Eligibility turns on **holdings alone**: a non-zero position makes you an impacted lender. Default
+status (`inDefault`, `penalizedDays`) is derived and reported as context, but does not gate. That
+matters for the verifier — see layer 4.
 
-- the ERC-20 `balanceOf(account)` for the token, plus
-- any amount the account had staked in the `MultiTokenStaking` contract (`0xC46E…6382`), looked up by the token's index in `stakingTokensList` via `userInfo(poolId, account)`.
+`penalizedDays` is whole days the penalty APR has been active, i.e. `timeDelinquent` beyond
+`delinquencyGracePeriod`. "In default" is the interim rule `timeDelinquent >= grace +
+defaultBufferSec` (90 days by default, `DEFAULT_BUFFER_DAYS`), read live.
 
-`lostValue = balance × lossPerToken`. Reads go through an **Alchemy** mainnet provider (`ALCHEMY_API_KEY` from `.env`). Pinning to a historical block is what makes the loss figure deterministic and tamper-proof — it reflects holdings at the moment of the exploit, not now.
+## What gets signed (`src/utils.ts`)
 
-### Signature verification (`utils.ts`)
+EIP-712 typed data: `Data { Contact, Location, Options, Undertaking, Claim }`, where `Claim` is
+`{ network, market, penalizedDays, amountOwedWei, asOfBlock }`.
 
-Two signing schemes are supported so the frontend can fall back gracefully:
+The **Qualifying Lender undertaking** and its definition list are constants here, joined into one
+canonical document whose SHA-256 (`QUALIFYING_LENDER_AGREEMENT_SHA256`) is what travels in the
+signature — `Undertaking { agreed, sha256 }`. The wallet prompt therefore stays short while the
+signature still binds the exact wording, which is published (rendered on the page and served by
+`GET /config`) so any verifier can recompute the digest. Editing that text by a single character
+changes the digest and invalidates every previously issued proof; `examples/` is pinned by test to
+catch exactly that.
 
-- **EIP-712 typed data** — structured `Data { Contact, Location, Options }` types, verified with `verifyTypedData`.
-- **`personal_sign`** — when the signature string is prefixed `personal_sign_`, the form is rendered to a canonical multi-line string and verified with `verifyMessage`.
+A `personal_sign` fallback exists server-side: when the signature is prefixed `personal_sign_`, the
+form is rendered to a canonical multi-line string and verified with `verifyMessage`. The page itself
+signs typed data only, but the format is supported end to end and shipped in `examples/`.
 
-Either way the result is the **recovered Ethereum address**, which is treated as the user's identity. The form is also validated server-side: country/state/city are checked against the `country-state-city` dataset, contact info requires at least an email or "other" field, email format is regex-checked, and the user must accept terms and opt into at least one of "speak to law enforcement" / "litigate".
-
-## Build & run
-
-The project has **no `build`/`start` npm scripts** — you compile with `tsc` and run the emitted JS with `node`.
-
-```bash
-yarn install          # or npm install
-npx tsc               # emits CommonJS to ./dist
-node dist/index.js    # run the server
-```
-
-**Build status:** verified — `tsc` compiles cleanly (exit 0, 9 JS files emitted). The only compile error out of the box is `Cannot find module '../.google.json'`, because that credentials file is intentionally gitignored. Supplying a `.google.json` (even a stub) makes the compile pass with zero errors.
-
-**Required runtime config (not in the repo, by design):**
-
-- `.env` with `ALCHEMY_API_KEY` (and `MODE=production` to enable HTTPS mode).
-- `.google.json` with `{ private_key, client_email, sheet_id }` for the Google Sheets service account.
-- In production, Let's Encrypt certs at `/etc/letsencrypt/live/juris.ndx.fi/`.
-
-A couple of modules run side-effecting code on import that assumes config is present — `sheets.ts` calls `connectSheet()` at module load, and `balance-check.ts`/`typechain` instantiate the Alchemy provider on load and even fire a test `affectedTokens(...)` call. Worth tidying when adapting (see below).
-
-## Observations & notes for adapting to Wildcat
-
-Things that are exploit-specific and will need to change for a Wildcat version:
-
-- **Hard-coded incident parameters** live in `balance-check.ts` (token list + `lossPerToken`) and `typechain/index.ts` (`BLOCK_NUMBER = 13417849`, `MultiTokenStaking` address, `stakingTokensList`). These encode *the Indexed Finance exploit specifically*. For Wildcat, the affected-balance logic is likely quite different (Wildcat's markets, lenders/borrowers, the relevant contracts and the snapshot block all change), so `balance-check.ts` + `typechain/` is the main domain rewrite.
-- **The form schema** (`utils.ts` types + `sheets.ts` `headerRow`) and the EIP-712 type definitions are tightly coupled — any field change must be made in the form, the typed-data `types`, `toTypedData`, `toSignatureString`, the sheet header, and `toRow` together.
-- **The frontend is pre-built only** (`app-build/`); there's no frontend source in this repo. Adapting the UI means sourcing the React app separately, or rebuilding it.
-- **Operational hygiene to fix on adaptation:** the import-time side effects (auto-connecting to Sheets, the test `affectedTokens` call at the bottom of `balance-check.ts`) should be removed/guarded; error handling on `/submit` swallows DB/sheet failures (logs but returns 200); and secrets are read from JSON/`.env` in a way you'll likely want to standardize.
-
-Overall it's a compact, single-purpose service: **prove you owned affected tokens at a fixed block via a wallet signature, then collect your claim into a sheet.** The reusable skeleton for Wildcat is the Express + signature-verification + LevelDB + Sheets pipeline; the on-chain "who was affected and by how much" piece is the part that's specific to the original incident.
-
----
-
-# Wildcat fork addition — proof bundling & Foundation verification
-
-> Everything above describes the **original juris.ndx.fi** design. This section documents a
-> capability added in the Wildcat fork (`wildcat-claims/`) and has no counterpart upstream.
-> The Wildcat service does **not** persist submissions — the lender's output is a self-contained,
-> independently-verifiable **proof**, which the Wildcat Foundation later checks.
+Smart-contract wallets have no key to recover from, so `/submit` asks the wallet whether it
+authorized the digest (`isValidSignature`, EIP-1271). See SAFE_MULTISIG.md.
 
 ## The proof, as two JSON files
 
@@ -136,54 +145,124 @@ one `.zip` (built client-side with `fflate`; the archive also carries a `README.
 file):
 
 - **`signed-message.json`** — the exact EIP-712 payload that was signed: `{ domain, primaryType,
-  types, message }`. The `message` holds the contact/consent fields and the on-chain **claim**
-  (`network, market, penalizedDays, amountOwedWei, asOfBlock`).
+  types, message }`.
 - **`proof.json`** — the detached `signature`, the `signer` address, and the server's receipt.
-  The signature over `signed-message.json` recovers to `signer`.
 
-## The `/verify` endpoint (`wildcat-claims/src/app.ts`)
+## The verifier (`src/verifyProof.ts`)
 
-`POST /verify` takes `{ signed, proof }` (the two files, unzipped in the browser) and checks three
-independent layers. It is **stateless** and does not trust the submitter — every claim is
-re-derived:
+`POST /verify` takes `{ signed, proof }` — the two files, unzipped in the browser — and checks four
+independent layers. It is stateless and trusts nothing the submitter says; every figure is
+re-derived. It accepts either payload shape: typed data, or `personal_sign` text.
 
-1. **Signature** — `recoverTypedSigner()` (`src/utils.ts`) recovers the signer from
-   `signed-message.json` + the signature alone, via `ethers.verifyTypedData` (`EIP712Domain` is
-   stripped so ethers derives it from `domain`). Pure cryptography — no chain access. A forged or
-   post-hoc-edited payload will not recover to the claimed signer.
-2. **Domain binding** — the signature must be bound to this deployment's EIP-712 domain
-   (`Wildcat Claims` v1) on the correct `chainId`. This prevents a signature made for another app
-   or chain from being replayed here.
-3. **On-chain replay** — `Eligibility.verifyClaimAtBlock(signer, market, asOfBlock)`
-   (`src/wildcat/eligibility.ts`) re-reads the market state and the signer's owed balance
-   **pinned to the committed `asOfBlock`** on the archive node (`RPC_URL`), and confirms the
-   `penalizedDays` / `amountOwedWei` match what was signed. Default status at that block is read
-   back and reported as context, not required: eligibility turns on holdings alone
-   (`Eligibility.eligibleClaim`), and a verifier that demanded more than the issuer does would
-   reject proofs this service legitimately produced. Because `currentState()` derives `timeDelinquent` from the block's own timestamp, an
-   `eth_call` at `asOfBlock` reproduces the exact figures deterministically — anyone with an
-   archive node reads back identical numbers.
+The implementation lives in its own module rather than inline in `app.ts` so that the real server
+and `scripts/demo-server.js` run the *same* verifier. While each held its own copy they drifted,
+and the verifier came to demand more of a proof than the issuer demands of a claim.
 
-   Crucially this is an **honest** read: unlike `eligibleClaim()`, it never applies the
-   `DEBUG_MODE` holdings fudge, so amounts compare byte-for-byte against the attestation.
+1. **Signature** — who signed. ECDSA recovery from the payload alone for an ordinary wallet
+   (`recoverTypedSigner`, or `verifyMessage` for `personal_sign`); pure cryptography, no chain
+   access. Where recovery yields nothing or a stranger, the named wallet is asked whether it
+   authorized the payload's own digest under EIP-1271 — how a Safe signs.
+2. **Binding** — an EIP-712 signature must be bound to this deployment's domain (`Wildcat Claims`
+   v1) on the correct `chainId`, so a signature made for another app or chain cannot be replayed
+   here. A `personal_sign` proof carries no domain, so this layer reports *not applicable* rather
+   than a pass. A debug session expects its own domain (below).
+3. **Undertaking** — the digest is recomputed from the published text and compared, and `agreed` is
+   asserted. A proof predating the undertaking reports `present: false` — a limit on what could be
+   established, not a forgery.
+4. **On-chain replay** — `Eligibility.verifyClaimAtBlock(signer, market, asOfBlock)` re-reads the
+   market and the signer's owed balance **pinned to the committed block** on an archive node, and
+   confirms `penalizedDays` / `amountOwedWei` match what was signed. Because `currentState()`
+   derives `timeDelinquent` from the block's own timestamp, an `eth_call` at `asOfBlock` reproduces
+   the figures deterministically — anyone with an archive node reads back identical numbers.
 
-The response carries a verdict: `valid` (signature + domain + on-chain all confirmed),
-`signature-valid` (crypto good but the replay could not be completed — e.g. RPC unreachable),
-`mismatch` (authentic signature, but committed figures no longer match chain — a doctored payload
-or a `DEBUG_MODE`-produced proof), or `invalid` (signature did not recover or is not bound to this
-deployment).
+   Default status is read back and **reported as context, not required**: eligibility turns on
+   holdings alone, and a verifier demanding more than the issuer would reject proofs this service
+   legitimately produced. This is also an **honest** read — the debug holdings fudge is never
+   applied, so amounts compare byte for byte against the attestation.
 
-## Block-pinned reads (`wildcat-claims/src/wildcat/chain.ts`)
+The verdict: **`valid`** (all four confirmed), **`signature-valid`** (signer and binding good, but
+something below is unproven — replay unreachable, or an undertaking that predates the commitment),
+**`mismatch`** (authentic signature, but what it commits to does not hold up: the undertaking digest
+is not the published one, or the figures no longer match chain), **`invalid`** (the signature did not
+establish a signer, or is not bound to this deployment).
 
-To support layer 3, `getMarketInfo` / `getMarketState` / `readLenderHeld` / `readWithdrawalsOwed`
-take an optional `blockTag` (default: configured snapshot or `latest`). Verification passes the
-historical `asOfBlock`; live eligibility keeps its existing behaviour unchanged.
+## Debug sessions (`src/debugSession.ts`)
 
-## Frontend
+`DEBUG_MODE` is process-wide, so it fakes eligibility for every visitor at once: local use only. For
+a dry run against a live deployment — necessary because there may be no market in default, and no
+wallet you control holding a position in one — `DEBUG_KEY` enables the same fudge scoped to **one
+browser**.
 
-The receipt gains a **"Download both as .zip"** button, and a collapsible **"Foundation · verify a
-submitted proof"** section below it (`wildcat-claims/app-build/index.html`). The Foundation pastes
-the two JSON blobs or uploads the `.zip`/`.json` files (unzipped and auto-classified client-side),
-clicks **Verify**, and sees the layered verdict. The section also carries a plain-language
-explainer of *what* is checked, *how* (crypto recovery + deterministic block replay, no trust in
-the applicant), and *what a valid/mismatch result means*.
+Open a session by loading the normal page as `/#dbg=<DEBUG_KEY>`, end one with `/#dbg=off`. The
+fragment never reaches a server, so the secret stays out of access logs, `Referer` headers and proxy
+caches; the page posts it once, then strips it from the URL and history. The session is a stateless
+HMAC cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over https) expiring after 12 hours, with the
+expiry covered by the MAC. Every handler asks per request, so a dry run never changes what anyone
+else sees. With `DEBUG_KEY` unset, `/debug/session` 404s exactly like an unregistered path, and
+answers a wrong key identically.
+
+A dry run rests on faked holdings, so it must not be able to masquerade as evidence: claims signed
+in a session use their own EIP-712 domain, `Wildcat Claims [DEBUG - NOT EVIDENCE]`, which the signer
+sees in the wallet prompt, and the `personal_sign` path gets an equivalent banner line. A debug proof
+therefore fails production verification structurally, rather than depending on a reader noticing a
+flag.
+
+## Chain access (`src/wildcat/chain.ts`)
+
+Every read goes through Multicall3 `aggregate3` where it can, so market discovery is a handful of
+`eth_call`s rather than O(markets). `getMarketInfo` / `getMarketState` / `readLenderHeld` /
+`readWithdrawalsOwed` take an optional block tag (default: configured snapshot, else `latest`);
+verification passes the historical `asOfBlock`.
+
+Requests are bounded by `RPC_TIMEOUT_MS` (default 8000) — ethers' own default is 300s, ten times a
+serverless function's budget. `isRpcTransportError` separates the endpoint failing from the contract
+answering unusably, so a transport failure is reported rather than retried into a function timeout;
+`isRpcAuthError` separates a gateway 401/403, which is configuration rather than a node fault. The
+default RPC is the Wildcat gateway, which is authenticated (`RPC_BEARER_TOKEN`) and routes by chain
+id.
+
+## Frontend (`app-build/index.html`)
+
+One self-contained file — no build step, no framework, ES modules from a CDN. It renders the
+undertaking and its definitions from `GET /config`, recomputes the digest in the browser and refuses
+to sign if it disagrees with the server, builds the typed data itself, and connects either an
+injected wallet or a Safe (auto-detected when loaded as a Safe App).
+
+The **"Foundation · verify a submitted proof"** section ships hidden: a lender mid-claim has nothing
+to verify. It is revealed when a claim completes, immediately after the receipt, and at `/#verify` —
+the Foundation arrives holding someone else's proof and never runs the claim flow, so gating purely
+on completion would lock out the section's only intended user. It carries a plain-language account of
+what is checked, how, and what each verdict means.
+
+## Build & run
+
+```bash
+npm install
+npm run build          # tsc -> dist/
+npm start              # node dist/index.js   (PORT=3001, or 443 with MODE=production)
+npm run dev            # ts-node src/index.ts
+npm test               # vitest run
+npm run typecheck      # tsc --noEmit
+npm run examples       # regenerate examples/ (changes every digest — see above)
+```
+
+`scripts/demo-server.js` runs the real `Eligibility`, signing and verification code against a
+**mock chain**, so the whole flow can be clicked through locally with no RPC:
+
+```bash
+npm run build && node scripts/demo-server.js    # :3001
+```
+
+Configuration is entirely environment-driven (`src/wildcat/config.ts`); `.env.example` lists every
+variable and DEPLOY_VERCEL.md is the deployment reference.
+
+## Notes & limits
+
+- **V2 only.** V1 markets would need the V1 lens and market wrappers.
+- **Default definition** is the interim `grace + 90 days` rule, read live — no historical
+  reconstruction of when default was first reached.
+- **Sanctioned/escrowed lenders** are not resolved: a position moved to a sanctions escrow is not
+  attributed back to the lender.
+- **The frontend carries its own copy of the undertaking text**, so the page and the server can
+  drift. `test/undertaking.test.ts` pins them together, since a single character of drift would
+  invalidate every signature the page produces.
