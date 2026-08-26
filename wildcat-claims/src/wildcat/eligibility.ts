@@ -172,7 +172,10 @@ export class Eligibility {
     return {
       ...summary,
       account,
-      eligible: summary.inDefault && owed > this.cfg.minOwedWei,
+      // The SAME gate as eligibleClaim: holdings alone. A verifier that demanded more than
+      // the issuer does would reject proofs this service legitimately produced — default
+      // status travels in `summary` as context, exactly as it does on the issuing side.
+      eligible: owed > this.cfg.minOwedWei,
       heldOwedWei: heldWei.toString(),
       withdrawalsOwedWei: withdrawalsWei.toString(),
       withdrawalsError,
