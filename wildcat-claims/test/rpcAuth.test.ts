@@ -75,10 +75,27 @@ const withEnv = async <T>(env: Record<string, string | undefined>, fn: () => Pro
 };
 
 describe('the authenticated RPC gateway', () => {
-  it('defaults to the Wildcat gateway', async () => {
-    await withEnv({ RPC_URL: undefined }, async () => {
-      expect(loadConfig().rpcUrl).toBe('https://rpc.wildcat.finance/');
+  it('defaults to the Wildcat gateway, keyed by chain id', async () => {
+    // The gateway routes by chain id: `/` answers 404 "route not found" even with a valid
+    // token, so the path is not decoration.
+    await withEnv({ RPC_URL: undefined, WILDCAT_NETWORK: undefined }, async () => {
+      const cfg = loadConfig();
+      expect(cfg.chainId).toBe(1);
+      expect(cfg.rpcUrl).toBe('https://rpc.wildcat.finance/1');
     });
+    // Sepolia has no baked-in ArchController, so supply the one value loadConfig demands.
+    await withEnv(
+      {
+        RPC_URL: undefined,
+        WILDCAT_NETWORK: 'sepolia',
+        ARCH_CONTROLLER: '0x000000000000000000000000000000000000dEaD',
+      },
+      async () => {
+        const cfg = loadConfig();
+        expect(cfg.chainId).toBe(11155111);
+        expect(cfg.rpcUrl).toBe('https://rpc.wildcat.finance/11155111');
+      }
+    );
   });
 
   it('sends the bearer token on every request when one is configured', async () => {

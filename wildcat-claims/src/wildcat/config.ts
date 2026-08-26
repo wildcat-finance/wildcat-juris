@@ -129,15 +129,18 @@ export function loadConfig(): WildcatConfig {
     multicall3: getAddress(process.env.MULTICALL3 ?? base.multicall3),
   };
 
+  const chainId = network === 'sepolia' ? 11155111 : 1;
   const lensMode: LensMode = (process.env.LENS_MODE ?? 'lens') === 'direct' ? 'direct' : 'lens';
   const bufferDays = Number(process.env.DEFAULT_BUFFER_DAYS ?? '90');
 
   return {
     network,
-    chainId: network === 'sepolia' ? 11155111 : 1,
-    // The Wildcat gateway. Authenticated: see rpcBearerToken. Override with RPC_URL — the
-    // previous default, eth-main.hinterlight.net, is open but was serving headers only.
-    rpcUrl: process.env.RPC_URL || 'https://rpc.wildcat.finance/',
+    chainId,
+    // The Wildcat gateway, which keys its routes by chain id — `/` is a 404 ("route not
+    // found") even with a valid token. Authenticated: see rpcBearerToken. Override with
+    // RPC_URL. The previous default, eth-main.hinterlight.net, is open but was serving
+    // header methods only, with every state read stalling 20s into a gateway error.
+    rpcUrl: process.env.RPC_URL || `https://rpc.wildcat.finance/${chainId}`,
     addresses,
     defaultBufferSec: Math.floor(bufferDays * DAY_SEC),
     borrower: process.env.BORROWER_ADDRESS ? getAddress(process.env.BORROWER_ADDRESS) : undefined,

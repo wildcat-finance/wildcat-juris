@@ -17,9 +17,16 @@ So there's nothing to "build" beyond installing dependencies — the function is
 
 ## RPC: the Wildcat archive node is integrated by default
 
-The app defaults to the Wildcat gateway (`https://rpc.wildcat.finance/`, baked into
-`src/wildcat/config.ts`). That endpoint is **authenticated**: set `RPC_BEARER_TOKEN` or every
-read fails with a 401 in about 0.1s, and the app will say so by name. Override the endpoint with
+The app defaults to the Wildcat gateway (`https://rpc.wildcat.finance/<chainId>` — `/1` for
+mainnet — baked into `src/wildcat/config.ts`). Two things about that endpoint: it is
+**authenticated**, so set `RPC_BEARER_TOKEN` or every read fails with a 401 in about 0.1s and the
+app will say so by name; and it **routes by chain id**, so the bare host answers
+`404 {"error":"route not found"}` even with a valid token.
+
+Measured through it, with a token: 86 registered markets, 32 distinct borrowers, and
+`getBorrowerMarkets()` for the busiest (17 markets) end to end in 237ms — against the 30s function
+budget. Archive reads work too (`eth_getBalance` at block 20,000,000 in 0.13s), which
+`verifyClaimAtBlock` needs. Override the endpoint with
 `RPC_URL` if you need a different archive node.
 
 The previous default, `eth-main.hinterlight.net`, is open but was observed serving header methods
@@ -63,7 +70,7 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `RPC_URL` | no | `https://rpc.wildcat.finance/` | Ethereum RPC the function calls. Must be reachable from Vercel. |
+| `RPC_URL` | no | `https://rpc.wildcat.finance/<chainId>` | Ethereum RPC the function calls. Must be reachable from Vercel. |
 | `RPC_BEARER_TOKEN` | **yes** for the default | — | Bearer token for the Wildcat gateway. Without it every read is a 401. Not needed for an open `RPC_URL`. |
 | `WILDCAT_NETWORK` | no | `mainnet` | `mainnet` or `sepolia` (selects baked-in contract addresses + chainId). |
 | `BORROWER_ADDRESS` | no | — | Pre-fills the borrower field on the page. |
