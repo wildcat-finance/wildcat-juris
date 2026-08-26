@@ -7,10 +7,10 @@ import { getAddress } from 'ethers';
 import { loadConfig } from './wildcat/config';
 import { Chain } from './wildcat/chain';
 import { Eligibility } from './wildcat/eligibility';
+import { verifyProof } from './verifyProof';
 import {
   getFormDataError,
   verifySignature,
-  recoverTypedSigner,
   claimDigest,
   chainIdFor,
   domainFor,
@@ -243,116 +243,21 @@ export function createApp(): Express {
     return res.json({ debug: true });
   });
 
-  // Independently verify a produced proof (for the Wildcat Foundation). Three layers:
-  //   1. Signature   — recover the signer from the signed EIP-712 payload (pure crypto).
-  //   2. Domain      — confirm the signature is bound to THIS deployment's domain + chain.
-  //   3. On-chain    — replay the committed block (asOfBlock) on the archive node and confirm
-  //                    the market was in penalized default and the lender was owed the amount.
-  // Accepts { signed: { domain, types, message }, proof: { signer, signature } } — exactly the
-  // two JSON files produced on submit (unzipped client-side).
+  // Independently verify a produced proof (for the Wildcat Foundation). The implementation
+  // lives in src/verifyProof.ts so this route and scripts/demo-server.js share one copy —
+  // they drifted apart when each held its own, and the verifier ended up stricter than the
+  // issuer. See that file for what each layer establishes.
+  //
+  // The session's debug flag goes with it: a dry run must be checkable end to end, and a
+  // dry-run proof must still read as invalid to anyone outside that session.
   app.post('/verify', async (req: Request, res: Response) => {
-    const { signed, proof } = (req.body ?? {}) as {
-      signed?: { domain?: any; types?: any; message?: any };
-      proof?: { signer?: string; signature?: string };
-    };
-
-    const domain = signed?.domain;
-    const types = signed?.types;
-    const message = signed?.message;
-    const signature = proof?.signature ?? (signed as any)?.signature;
-    if (!domain || !types || !message || typeof signature !== 'string') {
-      return res
-        .status(400)
-        .send('Provide a signed message (domain, types, message) and a signature.');
-    }
-
-    // 1 · Signature — recover the signer purely from the payload.
-    let recovered: string;
-    try {
-      recovered = getAddress(recoverTypedSigner(domain, types, message, signature));
-    } catch (err: any) {
-      return res.json({
-        signature: { valid: false, error: 'Signature does not recover a signer: ' + err.message },
-        overall: 'invalid',
-        verifiedAt: new Date().toISOString(),
-      });
-    }
-    const claimedSigner = asAddress(proof?.signer);
-    const signerMatches = claimedSigner ? claimedSigner === recovered : null;
-
-    // 2 · Domain — the signature must be bound to this app's name/version/chain.
-    const claim = (message as any).claim ?? {};
-    const network = typeof claim.network === 'string' ? claim.network : cfg.network;
-    // A debug session verifies against its own domain, so a dry run can be checked end to end.
-    // Outside a session this stays the production domain, so a dry-run proof reads as invalid.
-    const expectedDomain = domainFor(network, isDebug(req));
-    const domainMatches =
-      domain.name === expectedDomain.name &&
-      String(domain.version) === String(expectedDomain.version) &&
-      Number(domain.chainId) === Number(expectedDomain.chainId);
-    const networkMatches = network === cfg.network;
-
-    // 3 · On-chain replay at the committed block — the crux of the attestation.
-    const market = asAddress(claim.market);
-    const asOfBlock = Number(claim.asOfBlock);
-    let onChain: Record<string, unknown> = { checked: false };
-    if (!networkMatches) {
-      onChain = {
-        checked: false,
-        error: `Proof is for network "${network}"; this verifier serves "${cfg.network}".`,
-      };
-    } else if (market && Number.isInteger(asOfBlock) && asOfBlock > 0) {
-      try {
-        const live = await eligibility.verifyClaimAtBlock(recovered, market, asOfBlock);
-        onChain = {
-          checked: true,
-          asOfBlock,
-          market,
-          marketName: live.name,
-          assetSymbol: live.assetSymbol,
-          assetDecimals: live.assetDecimals,
-          inDefault: live.inDefault,
-          penalizedDays: live.penalizedDays,
-          amountOwedWei: live.amountOwedWei,
-          daysMatch: Number(live.penalizedDays) === Number(claim.penalizedDays),
-          amountMatches: live.amountOwedWei === String(claim.amountOwedWei),
-          signerHeldPosition: BigInt(live.amountOwedWei) > 0n,
-          withdrawalsError: live.withdrawalsError,
-        };
-      } catch (err: any) {
-        console.error('/verify replay:', err.message);
-        onChain = { checked: false, error: 'On-chain replay failed: ' + err.message };
-      }
-    } else {
-      onChain = { checked: false, error: 'Signed message has no market/asOfBlock to replay.' };
-    }
-
-    // Overall verdict.
-    const sigOk = domainMatches && signerMatches !== false;
-    const chainOk = onChain.checked
-      ? Boolean(onChain.inDefault) && Boolean(onChain.amountMatches) && Boolean(onChain.daysMatch)
-      : null;
-    let overall: 'valid' | 'signature-valid' | 'mismatch' | 'invalid';
-    if (!sigOk) overall = 'invalid';
-    else if (chainOk === false) overall = 'mismatch';
-    else if (chainOk === true) overall = 'valid';
-    else overall = 'signature-valid'; // signature + domain good; chain replay unavailable
-
-    return res.json({
-      signature: { valid: true, recovered, claimedSigner, signerMatches },
-      domain: { matches: domainMatches, networkMatches, expected: expectedDomain, provided: domain },
-      claim: {
-        network,
-        market,
-        penalizedDays: Number(claim.penalizedDays),
-        amountOwedWei: String(claim.amountOwedWei),
-        asOfBlock,
-      },
-      onChain,
-      overall,
-      verifiedAt: new Date().toISOString(),
-    });
+    const out = await verifyProof(
+      { cfg, chain, eligibility, debug: isDebug(req) },
+      req.body
+    );
+    return out.status === 200 ? res.json(out.body) : res.status(400).send(out.error);
   });
+
   // Safe App manifest + icon — lets Safe{Wallet} load this as a Custom App so a Safe lender
   // can open it from inside their Safe and sign with their owners (EIP-1271).
   app.get('/manifest.json', (_req, res) =>

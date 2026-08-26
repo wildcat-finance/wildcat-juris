@@ -291,6 +291,39 @@ export function verifySignature(
  * The 32-byte digest the lender signed — the value an EIP-1271 wallet (e.g. a Safe) checks via
  * isValidSignature. EIP-712 path: the typed-data hash; personal_sign path: the EIP-191 message hash.
  */
+/**
+ * The 32-byte digest of an EIP-712 payload *exactly as submitted* — the value an EIP-1271
+ * wallet checks. Unlike {@link claimDigest} this re-hashes the caller's own `{domain, types,
+ * message}` rather than rebuilding it from a form, so a Safe's proof can be verified without
+ * assuming its shape still matches what this deployment would produce today. `EIP712Domain`
+ * is stripped, as ethers derives it from `domain`.
+ */
+export function typedPayloadHash(
+  domain: TypedDataDomain,
+  types: Record<string, Array<{ name: string; type: string }>>,
+  message: Record<string, unknown>
+): string {
+  const t: Record<string, Array<{ name: string; type: string }>> = { ...types };
+  delete t.EIP712Domain;
+  return TypedDataEncoder.hash(domain, t, message);
+}
+
+/**
+ * Parse the personal_sign text back into its fields. The signed text is what
+ * {@link toSignatureString} produced: one `key: value` per line, values possibly empty, split
+ * on the FIRST colon so a value containing one survives. Lines with no colon (the debug
+ * banner) are skipped; a caller that cares about them inspects the raw text.
+ */
+export function parseSignatureLines(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    const i = line.indexOf(':');
+    if (i < 1) continue;
+    out[line.slice(0, i).trim()] = line.slice(i + 1).replace(/^ /, '');
+  }
+  return out;
+}
+
 export function claimDigest(
   form: FormData,
   claim: SignedClaimContext,

@@ -185,6 +185,36 @@ describe('verifyClaimAtBlock (independent re-derivation)', () => {
     expect(r.inDefault).toBe(true);
   });
 
+  it('holds a proof to the ISSUER\u2019s gate: holdings alone, not default status', async () => {
+    // The regression this pins: gating on inDefault here made the verifier stricter than
+    // eligibleClaim, so a proof the service had legitimately issued for a penalized but
+    // not-yet-defaulted market came back as a mismatch.
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: NOT_DEFAULTED }) },
+      held: { '0xM': 100n },
+    });
+    const r = await new Eligibility(chain, baseCfg).verifyClaimAtBlock('0xLENDER', '0xM', 555);
+    expect(r.inDefault).toBe(false); // reported as context…
+    expect(r.eligible).toBe(true); // …but holdings alone decide, exactly as on the issuing side
+  });
+
+  it('agrees with eligibleClaim on the same state', async () => {
+    for (const timeDelinquent of [DEFAULTED, NOT_DEFAULTED]) {
+      const mk = () =>
+        fakeChain({
+          infos: { '0xM': info('0xM') },
+          states: { '0xM': state({ timeDelinquent }) },
+          held: { '0xM': 100n },
+        });
+      const issued = await new Eligibility(mk(), baseCfg).eligibleClaim('0xLENDER', '0xM');
+      const replayed = await new Eligibility(mk(), baseCfg).verifyClaimAtBlock('0xLENDER', '0xM', 1);
+      expect(replayed.eligible).toBe(issued.eligible);
+      expect(replayed.amountOwedWei).toBe(issued.amountOwedWei);
+      expect(replayed.penalizedDays).toBe(issued.penalizedDays);
+    }
+  });
+
   it('is an HONEST read: the DEBUG holdings fudge is never applied', async () => {
     const chain = fakeChain({
       infos: { '0xM': info('0xM') },

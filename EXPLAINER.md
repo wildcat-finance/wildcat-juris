@@ -163,8 +163,10 @@ re-derived:
 3. **On-chain replay** — `Eligibility.verifyClaimAtBlock(signer, market, asOfBlock)`
    (`src/wildcat/eligibility.ts`) re-reads the market state and the signer's owed balance
    **pinned to the committed `asOfBlock`** on the archive node (`RPC_URL`), and confirms the
-   market was in penalized default and that `penalizedDays` / `amountOwedWei` match what was
-   signed. Because `currentState()` derives `timeDelinquent` from the block's own timestamp, an
+   `penalizedDays` / `amountOwedWei` match what was signed. Default status at that block is read
+   back and reported as context, not required: eligibility turns on holdings alone
+   (`Eligibility.eligibleClaim`), and a verifier that demanded more than the issuer does would
+   reject proofs this service legitimately produced. Because `currentState()` derives `timeDelinquent` from the block's own timestamp, an
    `eth_call` at `asOfBlock` reproduces the exact figures deterministically — anyone with an
    archive node reads back identical numbers.
 
