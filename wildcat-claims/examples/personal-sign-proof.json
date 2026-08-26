@@ -3,8 +3,8 @@
   "signer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "recoveredFromSignature": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "signatureValid": true,
-  "messageHash": "0x53659e444776ec64d2f78979afadc08503bb78d44bcc2622a585277a76c568c8",
-  "signature": "personal_sign_0xd40deeafe7014888b6bc59e17f7205bde02d8b6294b91f1662b5a0a5091a6e6d6b65a354fb773197f102773384cfabcc84e0d89bc0114bd436af73ab931d74f31c",
+  "messageHash": "0xdcaa6911b6036862460cd74bcf79dddab7678a15fea611c5d4d9e6536889b1a7",
+  "signature": "personal_sign_0xbdd4adcd099a7cad6bdb56ee84b16214a1fd1913771838fa416e2661febc997d764680d9c2774fd39bfd5ce29214c829df368d104f17fbd989b89d20bc3b330c1c",
   "serverResponse": {
     "ok": true,
     "market": "0x00000000000000000000000000000000000000A1",

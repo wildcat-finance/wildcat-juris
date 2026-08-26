@@ -60,10 +60,20 @@ design docs.
   much is owed, and the block the figures were read at, so anyone can replay that block on an
   archive node to confirm the data is real, and the signature can't be reused elsewhere. The
   server re-checks eligibility live, then returns a copyable proof (nothing is stored).
+- **Qualifying Lender undertaking** — the confidentiality undertaking a *lender* gives over a
+  borrower's Identifying Particulars (the signer is a lender in a Market the borrower deployed,
+  dealing with the consequences of its default). The undertaking and the definitions it turns on
+  are shown in full in the page body and again at the point of signature; the signed message
+  carries only `undertaking { agreed, sha256 }` — the SHA-256 of that exact text — so the wallet
+  prompt stays readable while the signature still binds the wording beyond alteration. The text
+  is published three ways (rendered on the page, served by `GET /config`, and checked in at
+  `wildcat-claims/examples/qualifying-lender-agreement.txt`), so any proof holder can hash it and
+  confirm what was agreed. The server recomputes the digest from its own copy
+  (`QUALIFYING_LENDER_AGREEMENT` in `src/utils.ts`) and rejects a submission that does not agree.
 
 ## Endpoints
 
-- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain, debug flag.
+- `GET /config` — network, chainId, default-buffer days, optional pre-filled borrower, EIP-712 domain, the Qualifying Lender undertaking + its definitions + their SHA-256, debug flag.
 - `POST /markets` — `{ borrower }` → that borrower's markets with names + live `inDefault`.
 - `POST /eligibility` — `{ account, market }` → owed amount, default status, and the claim context to sign.
 - `POST /submit` — `{ data: { form, claim }, signature }` → re-verifies the signature + eligibility and returns a copyable proof.

@@ -32,6 +32,16 @@
         "type": "bool"
       }
     ],
+    "Undertaking": [
+      {
+        "name": "agreed",
+        "type": "bool"
+      },
+      {
+        "name": "sha256",
+        "type": "bytes32"
+      }
+    ],
     "Claim": [
       {
         "name": "network",
@@ -68,6 +78,10 @@
         "type": "Options"
       },
       {
+        "name": "undertaking",
+        "type": "Undertaking"
+      },
+      {
         "name": "claim",
         "type": "Claim"
       }
@@ -84,6 +98,10 @@
     },
     "options": {
       "acceptTerms": true
+    },
+    "undertaking": {
+      "agreed": true,
+      "sha256": "0xb53a35c92425b536da60d5c926aba61eaa9fc6482b2993fe06f905bd9c625026"
     },
     "claim": {
       "network": "mainnet",

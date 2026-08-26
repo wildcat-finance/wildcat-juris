@@ -18,6 +18,8 @@ import { Wallet, getAddress, verifyTypedData, TypedDataEncoder, hashMessage } fr
 import {
   domainFor,
   EIP712_TYPES,
+  QUALIFYING_LENDER_AGREEMENT,
+  QUALIFYING_LENDER_AGREEMENT_SHA256,
   toSignatureString,
   verifySignature,
   type FormData,
@@ -36,6 +38,7 @@ const form: FormData = {
   other: '',
   country: 'GB',
   acceptTerms: true,
+  acceptUndertaking: true,
 };
 
 const claim: SignedClaimContext = {
@@ -54,6 +57,7 @@ const typedMessage = (f: FormData, c: SignedClaimContext) => ({
   contactInfo: { name: f.name, email: f.email || '', other: f.other || '' },
   location: { country: f.country },
   options: { acceptTerms: f.acceptTerms },
+  undertaking: { agreed: f.acceptUndertaking, sha256: QUALIFYING_LENDER_AGREEMENT_SHA256 },
   claim: {
     network: c.network,
     market: getAddress(c.market),
@@ -83,8 +87,20 @@ function write(name: string, value: unknown): void {
   console.log('wrote', path.relative(path.join(__dirname, '..'), file));
 }
 
+/**
+ * The canonical agreed text, byte-exact and with NO trailing newline: these are the exact bytes
+ * QUALIFYING_LENDER_AGREEMENT_SHA256 is taken over, so anyone holding a proof can hash this file
+ * and confirm what the signer agreed to. test/undertaking.test.ts enforces the match.
+ */
+function writeAgreementText(): void {
+  const file = path.join(OUT_DIR, 'qualifying-lender-agreement.txt');
+  fs.writeFileSync(file, QUALIFYING_LENDER_AGREEMENT);
+  console.log('wrote', path.relative(path.join(__dirname, '..'), file));
+}
+
 async function main(): Promise<void> {
   fs.mkdirSync(OUT_DIR, { recursive: true });
+  writeAgreementText();
   const wallet = new Wallet(TEST_PRIVATE_KEY);
   const signer = getAddress(wallet.address);
   const domain = domainFor(claim.network);
@@ -142,6 +158,7 @@ async function main(): Promise<void> {
   if (eip712Recovered.toLowerCase() !== signer.toLowerCase()) throw new Error('EIP-712 example does not verify');
   if (personalRecovered.toLowerCase() !== signer.toLowerCase()) throw new Error('personal_sign example does not verify');
   console.log('\nAll generated proofs verify back to', signer);
+  console.log('Undertaking digest committed in them:', QUALIFYING_LENDER_AGREEMENT_SHA256);
 }
 
 main().catch((err) => {

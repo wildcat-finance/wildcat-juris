@@ -25,6 +25,7 @@ npm run examples
 | `penalizedDays` | `118`                                        |
 | `amountOwedWei` | `250000000000` (250,000 of a 6-decimal asset)|
 | `asOfBlock`     | `20812345`                                   |
+| `undertaking`   | `{ agreed: true, sha256: 0xb53a…5026 }`      |
 | signer          | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
 
 ## Files
@@ -35,6 +36,7 @@ npm run examples
 | [`eip712-proof.json`](eip712-proof.json) | The verification proof for the EIP-712 signature: recovered signer, the 32-byte typed-data hash, the signature, and the `/submit` receipt. Frontend "Signature & verification proof" box. |
 | [`personal-sign-signed-payload.json`](personal-sign-signed-payload.json) | The plain UTF-8 message signed on the `personal_sign` fallback path (for wallets that can't do `signTypedData`). |
 | [`personal-sign-proof.json`](personal-sign-proof.json) | The verification proof for the `personal_sign` signature. Note the `signature` carries the `personal_sign_` prefix the server keys on. |
+| [`qualifying-lender-agreement.txt`](qualifying-lender-agreement.txt) | The exact bytes the signed `undertaking.sha256` is taken over: the Qualifying Lender undertaking followed by its definitions. No trailing newline. |
 
 ## Two signing paths
 
@@ -48,6 +50,33 @@ npm run examples
 Either way the claim commits to `{ network, market, penalizedDays, amountOwedWei, asOfBlock }`,
 so the proof binds *which* market, *how much* was owed, and *at which block* — anyone can replay
 `asOfBlock` on an archive node to confirm the figures.
+
+## The Qualifying Lender undertaking
+
+Both payloads also commit to the Qualifying Lender undertaking — the confidentiality obligation a
+*lender* gives over a borrower's Identifying Particulars — as `undertaking { agreed, sha256 }`
+(typed data) and as the `acceptUndertaking` / `undertakingSha256` lines (`personal_sign`).
+
+What is signed is the **SHA-256 of the agreed text, not the text itself**: a wallet prompt stays
+readable, while the digest still binds the exact wording. The text those bytes cover is published
+here as [`qualifying-lender-agreement.txt`](qualifying-lender-agreement.txt) — the undertaking
+followed by each definition, separated by blank lines, **byte-exact with no trailing newline**. So
+a proof is checkable end to end:
+
+```bash
+# the digest committed in the signature, recomputed from the published text
+printf '%s' "$(cat examples/qualifying-lender-agreement.txt)" | sha256sum
+# -> b53a35c92425b536da60d5c926aba61eaa9fc6482b2993fe06f905bd9c625026
+```
+
+The definitions are carried because the undertaking turns on them: `Qualifying Lender` and
+`Identifying Particulars`, which in turn pull in `Company`, `default` and `borrower verification
+data`. `Market` is not defined — it is evident on its face.
+
+Reword any of it by a single character and the digest changes, every prior proof stops verifying
+against it, and these examples must be regenerated. `test/undertaking.test.ts` pins the frontend's
+copy of the text to `src/utils.ts` and hashes the published file back to the committed digest, so
+none of the three copies can drift apart silently.
 
 ## Smart-contract wallets (Safe / EIP-1271)
 

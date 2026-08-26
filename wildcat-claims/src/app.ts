@@ -13,6 +13,10 @@ import {
   claimDigest,
   chainIdFor,
   domainFor,
+  QUALIFYING_LENDER_UNDERTAKING,
+  QUALIFYING_LENDER_DEFINITION_LIST,
+  QUALIFYING_LENDER_AGREEMENT,
+  QUALIFYING_LENDER_AGREEMENT_SHA256,
   type SubmitData,
 } from './utils';
 
@@ -75,6 +79,13 @@ export function createApp(): Express {
       borrower: cfg.borrower ?? null,
       defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
       domain: domainFor(cfg.network),
+      // The undertaking a lender gives, its definitions, the canonical document they form, and
+      // that document's SHA-256 — the value bound into the signature. Published so any client can
+      // render the exact wording and any verifier can recompute the digest.
+      undertaking: QUALIFYING_LENDER_UNDERTAKING,
+      undertakingDefinitions: QUALIFYING_LENDER_DEFINITION_LIST,
+      undertakingAgreement: QUALIFYING_LENDER_AGREEMENT,
+      undertakingSha256: QUALIFYING_LENDER_AGREEMENT_SHA256,
       debug: cfg.debugMode,
     })
   );

@@ -33,6 +33,16 @@
       .pill.def { color: var(--err); border-color: rgba(255,107,107,0.5); }
       .pill.ok { color: var(--ok); border-color: rgba(63,191,127,0.5); }
       .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+      .undertaking { background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+        border-radius: 8px; padding: 12px 14px; margin: 0 0 4px; font-size: 13.5px; line-height: 1.55; color: var(--text); }
+      .undertaking p { margin: 0; }
+      .lead { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+      details.defs { margin-top: 10px; }
+      details.defs summary { cursor: pointer; font-size: 12px; color: var(--accent-2); }
+      details.defs dl { margin: 10px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+      details.defs dd { margin: 0 0 8px; }
+      .sha { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+        word-break: break-all; margin-top: 10px; }
       .banner { background: rgba(240,180,41,0.15); border: 1px solid var(--accent); color: var(--accent-2); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; font-weight: 600; }
       .code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; margin: 6px 0; }
       .copybtn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 500; margin-bottom: 10px; }
@@ -56,6 +66,13 @@
       <div class="card">
         <h2>Context</h2>
         <dl class="meta" id="contextMeta"><dd>Loading…</dd></dl>
+      </div>
+
+      <div class="card">
+        <h2>Qualifying Lender undertaking</h2>
+        <div id="undertakingBlock"></div>
+        <div class="hint">You give this undertaking as a lender. You will be asked to agree to it before
+          signing, and your agreement is committed inside the signed claim itself.</div>
       </div>
 
       <div class="card">
@@ -107,7 +124,10 @@
         <label>Country *</label>
         <select id="country"></select>
 
-        <label class="check"><input type="checkbox" id="acceptTerms" /><span>I confirm the above is accurate and intend to submit this proof to the Wildcat Foundation as evidence of my eligibility as an impacted lender. *</span></label>
+        <label style="margin-top:18px">Qualifying Lender undertaking *</label>
+        <div id="undertakingBlockForm"></div>
+
+        <label class="check"><input type="checkbox" id="acceptDeclaration" /><span>As a Qualifying Lender in this Market, I acknowledge and agree to the undertaking and definitions set out above; I confirm the above is accurate; and I intend to submit this proof to the Wildcat Foundation as evidence of my eligibility as an impacted lender. *</span></label>
 
         <button id="submitBtn">Sign &amp; submit claim</button>
         <div id="submitStatus"></div>
@@ -136,6 +156,51 @@
       const hide = (el) => el.classList.add("hidden");
       const setStatus = (el, msg, kind) => { el.className = msg ? "status " + (kind || "") : ""; el.textContent = msg; };
       const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+      // Verbatim Qualifying Lender undertaking. Signed as part of the claim, so this string must
+      // match QUALIFYING_LENDER_UNDERTAKING in src/utils.ts character for character — the server
+      // rebuilds the typed data from its own copy, and any drift makes every signature invalid.
+      // test/undertaking.test.ts asserts the two stay identical.
+      const UNDERTAKING =
+        "As a Qualifying Lender, you acknowledge and agree that by receiving any information " +
+        "relating to the Borrower's Identifying Particulars, you shall not use that information " +
+        "for any purpose other than (i) in connection with the Market in respect of which that " +
+        "information was disclosed to you and (ii) to pursue any legitimate course of action " +
+        "arising therefrom.";
+
+      // The defined terms the undertaking turns on. Same rule as above: character-for-character
+      // identical to QUALIFYING_LENDER_DEFINITION_LIST in src/utils.ts. `Market` is deliberately
+      // not defined — it is evident on its face.
+      const DEFINITIONS = [
+        '"Qualifying Lender" means a person who (i) held a debt position (including market tokens) in ' +
+          "the affected Market at the time of the relevant default, or (ii) has acquired such a debt " +
+          "position, in whole or in part, by transfer, whether before or after the default, and who in " +
+          "each case can demonstrate control of the relevant address(es) to the satisfaction of the Company.",
+        '"Identifying Particulars" means the minimum information reasonably necessary for a lender to ' +
+          "evaluate and, if it chooses, pursue its own rights and remedies against the borrower entity, " +
+          "including, but not limited to, the following: the legal name of the borrower entity; its " +
+          "registration number and jurisdiction of incorporation; its registered office address; and the " +
+          "name and role of a natural person authorised to accept service on the entity's behalf. For the " +
+          "avoidance of doubt, such information shall include no other borrower verification data.",
+        '"Company" means Wildcat Foundation.',
+        '"default", in respect of a Market, means that the Market has entered a delinquent state and has ' +
+          "incurred the penalty rate (as determined by the grace tracker) for a cumulative period of " +
+          "ninety (90) days; where a Loan Agreement is in place, that agreement governs instead.",
+        '"borrower verification data" means the identity-verification data collected and retained by the ' +
+          "Company and its identity-verification processor when a borrower is whitelisted, as described " +
+          "in the Privacy Policy.",
+      ];
+
+      // The canonical document the signature commits to by digest. The signed claim carries only
+      // this SHA-256, so the wallet prompt stays readable; the text itself is on this page and at
+      // /config, so anyone can recompute the digest and see exactly what was agreed.
+      const AGREEMENT = [UNDERTAKING, ...DEFINITIONS].join("\n\n");
+      let agreementSha = null;   // "0x…" once computed
+
+      async function sha256Hex(text) {
+        const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+        return "0x" + [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      }
 
       let cfg = null, account = null, selectedMarket = null, elig = null;
       let markets = [];
@@ -334,12 +399,21 @@
           email: $("email").value.trim(),
           other: $("other").value.trim(),
           country: $("country").value,
-          acceptTerms: $("acceptTerms").checked,
+          // One checkbox, two affirmations: accuracy/submission and the undertaking. They stay
+          // separate fields in the signed message because they are separate declarations.
+          acceptTerms: $("acceptDeclaration").checked,
+          acceptUndertaking: $("acceptDeclaration").checked,
         };
         if (!form.name) return setStatus($("submitStatus"), "Please enter your name.", "err");
         if (!form.email && !form.other) return setStatus($("submitStatus"), "Provide an email or other contact.", "err");
         if (!form.country) return setStatus($("submitStatus"), "Please select a country.", "err");
-        if (!form.acceptTerms) return setStatus($("submitStatus"), "You must confirm the consent checkbox.", "err");
+        if (!form.acceptUndertaking) return setStatus($("submitStatus"), "You must agree to the Qualifying Lender undertaking and confirm your details.", "err");
+        if (!agreementSha) return setStatus($("submitStatus"), "Still computing the undertaking digest \u2014 try again in a moment.", "err");
+        // The server rebuilds the digest from its own copy of the text. If the page is serving
+        // different wording, say so plainly instead of failing later as "Invalid signature".
+        if (cfg.undertakingSha256 && cfg.undertakingSha256 !== agreementSha) {
+          return setStatus($("submitStatus"), "This page's undertaking text does not match the server's \u2014 reload before signing.", "err");
+        }
 
         const btn = $("submitBtn");
         btn.disabled = true;
@@ -351,6 +425,7 @@
             Contact: [ { name: "name", type: "string" }, { name: "email", type: "string" }, { name: "other", type: "string" } ],
             Location: [ { name: "country", type: "string" } ],
             Options: [ { name: "acceptTerms", type: "bool" } ],
+            Undertaking: [ { name: "agreed", type: "bool" }, { name: "sha256", type: "bytes32" } ],
             Claim: [
               { name: "network", type: "string" },
               { name: "market", type: "address" },
@@ -358,12 +433,13 @@
               { name: "amountOwedWei", type: "uint256" },
               { name: "asOfBlock", type: "uint256" },
             ],
-            Data: [ { name: "contactInfo", type: "Contact" }, { name: "location", type: "Location" }, { name: "options", type: "Options" }, { name: "claim", type: "Claim" } ],
+            Data: [ { name: "contactInfo", type: "Contact" }, { name: "location", type: "Location" }, { name: "options", type: "Options" }, { name: "undertaking", type: "Undertaking" }, { name: "claim", type: "Claim" } ],
           };
           const value = {
             contactInfo: { name: form.name, email: form.email || "", other: form.other || "" },
             location: { country: form.country },
             options: { acceptTerms: form.acceptTerms },
+            undertaking: { agreed: form.acceptUndertaking, sha256: agreementSha },
             claim: elig.claim,
           };
           const signature = await signer.signTypedData(cfg.domain, types, value);
@@ -384,7 +460,9 @@
             `in <b>${esc(elig.name)}</b> — penalized <b>${elig.claim.penalizedDays}d</b> — as of block <b>${elig.claim.asOfBlock}</b>.`;
           $("verifyNote").innerHTML =
             `These figures are committed in the signature and were read from chain at block ${elig.claim.asOfBlock} — anyone can replay that block on an archive node to confirm the market's penalized delinquency and the lender's balance. ` +
-            `Signed no earlier than that block; the server logged receipt at ${esc(out.submittedAt)}.` +
+            `Signed no earlier than that block; the server logged receipt at ${esc(out.submittedAt)}. ` +
+            `The signature also commits to <b>${esc(agreementSha)}</b> \u2014 the SHA-256 of the Qualifying Lender ` +
+            `undertaking and definitions shown above, which the server recomputes from its own copy of that text.` +
             (out.debug ? ` <b style="color:var(--accent-2)">⚠ DEBUG: the held amount was assumed (not a real balance) — disable DEBUG_MODE for a real attestation.</b>` : "");
 
           // Receipt: the exact signed payload + proof the signature verifies, both copyable.
@@ -414,6 +492,29 @@
         }
       });
 
+      // Rendered identically in the page body and at the point of signature.
+      function undertakingHtml() {
+        return `
+          <p class="lead">You are giving this undertaking as a <b>lender</b> in a Market deployed by the
+            borrower &mdash; not as the party that created it. It governs how you may use the borrower's
+            Identifying Particulars if they are disclosed to you as a consequence of that Market's default.</p>
+          <blockquote class="undertaking"><p>&ldquo;${esc(UNDERTAKING)}&rdquo;</p></blockquote>
+          <details class="defs">
+            <summary>Definitions &mdash; as used in the undertaking above</summary>
+            <dl>${DEFINITIONS.map((d) => `<dd>${esc(d)}</dd>`).join("")}</dl>
+          </details>
+          <div class="sha">Signed as SHA-256 of the undertaking and definitions above:
+            <span class="shaVal">${agreementSha ? esc(agreementSha) : "computing…"}</span></div>`;
+      }
+
+      function renderUndertaking() {
+        const html = undertakingHtml();
+        $("undertakingBlock").innerHTML = html;
+        $("undertakingBlockForm").innerHTML = html;
+      }
+
+      renderUndertaking();
+      sha256Hex(AGREEMENT).then((h) => { agreementSha = h; renderUndertaking(); });
       loadConfig().then(trySafeApp);
       initCountries();
     </script>

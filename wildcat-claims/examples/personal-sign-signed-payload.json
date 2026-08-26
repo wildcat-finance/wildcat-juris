@@ -6,11 +6,13 @@
     "other: ",
     "country: GB",
     "acceptTerms: true",
+    "acceptUndertaking: true",
+    "undertakingSha256: 0xb53a35c92425b536da60d5c926aba61eaa9fc6482b2993fe06f905bd9c625026",
     "network: mainnet",
     "market: 0x00000000000000000000000000000000000000A1",
     "penalizedDays: 118",
     "amountOwedWei: 250000000000",
     "asOfBlock: 20812345"
   ],
-  "message": "name: Ada Lovelace\nemail: ada@example.io\nother: \ncountry: GB\nacceptTerms: true\nnetwork: mainnet\nmarket: 0x00000000000000000000000000000000000000A1\npenalizedDays: 118\namountOwedWei: 250000000000\nasOfBlock: 20812345"
+  "message": "name: Ada Lovelace\nemail: ada@example.io\nother: \ncountry: GB\nacceptTerms: true\nacceptUndertaking: true\nundertakingSha256: 0xb53a35c92425b536da60d5c926aba61eaa9fc6482b2993fe06f905bd9c625026\nnetwork: mainnet\nmarket: 0x00000000000000000000000000000000000000A1\npenalizedDays: 118\namountOwedWei: 250000000000\nasOfBlock: 20812345"
 }

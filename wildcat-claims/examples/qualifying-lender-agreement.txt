@@ -1,0 +1,11 @@
+As a Qualifying Lender, you acknowledge and agree that by receiving any information relating to the Borrower's Identifying Particulars, you shall not use that information for any purpose other than (i) in connection with the Market in respect of which that information was disclosed to you and (ii) to pursue any legitimate course of action arising therefrom.
+
+"Qualifying Lender" means a person who (i) held a debt position (including market tokens) in the affected Market at the time of the relevant default, or (ii) has acquired such a debt position, in whole or in part, by transfer, whether before or after the default, and who in each case can demonstrate control of the relevant address(es) to the satisfaction of the Company.
+
+"Identifying Particulars" means the minimum information reasonably necessary for a lender to evaluate and, if it chooses, pursue its own rights and remedies against the borrower entity, including, but not limited to, the following: the legal name of the borrower entity; its registration number and jurisdiction of incorporation; its registered office address; and the name and role of a natural person authorised to accept service on the entity's behalf. For the avoidance of doubt, such information shall include no other borrower verification data.
+
+"Company" means Wildcat Foundation.
+
+"default", in respect of a Market, means that the Market has entered a delinquent state and has incurred the penalty rate (as determined by the grace tracker) for a cumulative period of ninety (90) days; where a Loan Agreement is in place, that agreement governs instead.
+
+"borrower verification data" means the identity-verification data collected and retained by the Company and its identity-verification processor when a borrower is whitelisted, as described in the Privacy Policy.

@@ -17,6 +17,10 @@ const {
   toSignatureString,
   chainIdFor,
   domainFor,
+  QUALIFYING_LENDER_UNDERTAKING,
+  QUALIFYING_LENDER_DEFINITION_LIST,
+  QUALIFYING_LENDER_AGREEMENT,
+  QUALIFYING_LENDER_AGREEMENT_SHA256,
 } = require('../dist/utils');
 
 // ---- Dummy config + mock chain -------------------------------------------
@@ -79,7 +83,12 @@ app.use(express.json());
 app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
 app.get('/config', (_req, res) => res.json({
   network: cfg.network, chainId: chainIdFor(cfg.network), borrower: cfg.borrower,
-  defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400), domain: domainFor(cfg.network), debug: cfg.debugMode,
+  defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400), domain: domainFor(cfg.network),
+  undertaking: QUALIFYING_LENDER_UNDERTAKING,
+  undertakingDefinitions: QUALIFYING_LENDER_DEFINITION_LIST,
+  undertakingAgreement: QUALIFYING_LENDER_AGREEMENT,
+  undertakingSha256: QUALIFYING_LENDER_AGREEMENT_SHA256,
+  debug: cfg.debugMode,
 }));
 
 app.post('/markets', async (req, res) => {
@@ -137,7 +146,10 @@ async function signedSubmission() {
   const wallet = Wallet.createRandom();
   const market = '0x1111111111111111111111111111111111111111';
   const result = await eligibility.eligibleClaim(wallet.address, market);
-  const form = { name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US', acceptTerms: true };
+  const form = {
+    name: 'Jane Lender', email: 'jane@example.com', other: '', country: 'US',
+    acceptTerms: true, acceptUndertaking: true,
+  };
   const claim = {
     network: 'mainnet', market: getAddress(market),
     penalizedDays: result.penalizedDays, amountOwedWei: result.amountOwedWei, asOfBlock: result.asOfBlock,
