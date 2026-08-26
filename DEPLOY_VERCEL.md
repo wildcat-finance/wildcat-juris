@@ -17,9 +17,14 @@ So there's nothing to "build" beyond installing dependencies — the function is
 
 ## RPC: the Wildcat archive node is integrated by default
 
-The app defaults to the Wildcat mainnet archive node (`https://eth-main.hinterlight.net/`,
-baked into `src/wildcat/config.ts`), so the hosted deployment works without setting `RPC_URL`.
-You can still override it by setting `RPC_URL` in the Vercel environment.
+The app defaults to the Wildcat gateway (`https://rpc.wildcat.finance/`, baked into
+`src/wildcat/config.ts`). That endpoint is **authenticated**: set `RPC_BEARER_TOKEN` or every
+read fails with a 401 in about 0.1s, and the app will say so by name. Override the endpoint with
+`RPC_URL` if you need a different archive node.
+
+The previous default, `eth-main.hinterlight.net`, is open but was observed serving header methods
+only — `eth_blockNumber` in 0.26s while `eth_getBalance`, `eth_getCode` and `eth_call` each stalled
+20s and returned a gateway error. See **When market lookup fails** below.
 
 The one thing to verify: the function runs in Vercel's cloud, so **that node must be reachable
 from Vercel's egress**. If it's network-restricted, either allowlist Vercel or set `RPC_URL` to
@@ -58,7 +63,8 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `RPC_URL` | no | Wildcat archive node | Ethereum RPC the function calls. Defaults to `eth-main.hinterlight.net`; override if needed. Must be reachable from Vercel. |
+| `RPC_URL` | no | `https://rpc.wildcat.finance/` | Ethereum RPC the function calls. Must be reachable from Vercel. |
+| `RPC_BEARER_TOKEN` | **yes** for the default | — | Bearer token for the Wildcat gateway. Without it every read is a 401. Not needed for an open `RPC_URL`. |
 | `WILDCAT_NETWORK` | no | `mainnet` | `mainnet` or `sepolia` (selects baked-in contract addresses + chainId). |
 | `BORROWER_ADDRESS` | no | — | Pre-fills the borrower field on the page. |
 | `DEFAULT_BUFFER_DAYS` | no | `90` | "In default" = `timeDelinquent ≥ grace + this many days`. |
@@ -109,9 +115,11 @@ Check which half is broken in one request:
 curl https://<your-deployment>/health?deep=1
 ```
 
-`rpc.header.ok` covers a header read, `rpc.state.ok` the cheapest possible state read. Header true
-with state false is the case above: the node needs attention, or point `RPC_URL` at another archive
-endpoint. Against the node directly, the same split shows as `eth_blockNumber` returning `200` while
+`rpc.header.ok` covers a header read, `rpc.state.ok` the cheapest possible state read, and
+`rpc.authenticated` says whether a bearer token is configured. Header true with state false is the
+case above: the node needs attention, or point `RPC_URL` at another archive endpoint. Both false
+with `authenticated: false` against an authenticated gateway means `RPC_BEARER_TOKEN` is missing —
+the app reports that case separately, so it is never confused with a node fault. Against the node directly, the same split shows as `eth_blockNumber` returning `200` while
 `eth_getBalance` on the zero address hangs and then returns a gateway error.
 
 ## How requests are routed

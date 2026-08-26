@@ -56,6 +56,14 @@ export interface WildcatConfig {
   rpcTimeoutMs: number;
 
   /**
+   * Bearer token for an authenticated RPC gateway. rpc.wildcat.finance sits behind one
+   * (`WWW-Authenticate: Bearer realm="wildcat-gateway"`) and answers 401 in ~0.1s without it,
+   * so a missing token is a configuration error the app should name rather than a node fault.
+   * Env: RPC_BEARER_TOKEN. Unset is correct for an open endpoint.
+   */
+  rpcBearerToken?: string;
+
+  /**
    * DEBUG (testing only): when true, any lender being checked is assumed to hold >= 100 of
    * the underlying in every market, so testers can exercise the claim-signing flow without a
    * real position. Signatures are still verified normally. Env: DEBUG_MODE. Off in production.
@@ -127,8 +135,9 @@ export function loadConfig(): WildcatConfig {
   return {
     network,
     chainId: network === 'sepolia' ? 11155111 : 1,
-    // Defaults to the Wildcat mainnet archive node; override with the RPC_URL env var.
-    rpcUrl: process.env.RPC_URL || 'https://eth-main.hinterlight.net/',
+    // The Wildcat gateway. Authenticated: see rpcBearerToken. Override with RPC_URL — the
+    // previous default, eth-main.hinterlight.net, is open but was serving headers only.
+    rpcUrl: process.env.RPC_URL || 'https://rpc.wildcat.finance/',
     addresses,
     defaultBufferSec: Math.floor(bufferDays * DAY_SEC),
     borrower: process.env.BORROWER_ADDRESS ? getAddress(process.env.BORROWER_ADDRESS) : undefined,
@@ -137,6 +146,7 @@ export function loadConfig(): WildcatConfig {
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,
     rpcTimeoutMs: Math.max(1_000, Number(process.env.RPC_TIMEOUT_MS ?? '8000') || 8_000),
+    rpcBearerToken: (process.env.RPC_BEARER_TOKEN ?? '').trim() || undefined,
     debugMode: ['1', 'true', 'yes'].includes((process.env.DEBUG_MODE ?? '').toLowerCase()),
     // A short key is worse than none: it invites guessing at a gate that fakes eligibility.
     debugKey: (process.env.DEBUG_KEY ?? '').trim().length >= 24

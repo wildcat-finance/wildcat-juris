@@ -5,7 +5,7 @@ import path from 'path';
 import { getAddress } from 'ethers';
 
 import { loadConfig } from './wildcat/config';
-import { Chain, isRpcTransportError } from './wildcat/chain';
+import { Chain, isRpcAuthError, isRpcTransportError } from './wildcat/chain';
 import { Eligibility } from './wildcat/eligibility';
 import { verifyProof } from './verifyProof';
 import {
@@ -99,7 +99,16 @@ export function createApp(): Express {
    * own FUNCTION_INVOCATION_TIMEOUT page, which says nothing about where to look.
    */
   const chainError = (res: Response, err: any, fallback: string) =>
-    isRpcTransportError(err)
+    isRpcAuthError(err)
+      ? res
+          .status(503)
+          .send(
+            `The Ethereum RPC rejected this deployment's credentials (${cfg.rpcUrl}). ` +
+              (cfg.rpcBearerToken
+                ? 'RPC_BEARER_TOKEN is set but was not accepted — check it has not expired.'
+                : 'RPC_BEARER_TOKEN is not set, and this endpoint requires it.')
+          )
+      : isRpcTransportError(err)
       ? res
           .status(503)
           .send(
@@ -131,7 +140,13 @@ export function createApp(): Express {
     return res.json({
       ...base,
       ok: header.ok && state.ok,
-      rpc: { url: cfg.rpcUrl, timeoutMs: cfg.rpcTimeoutMs, header, state },
+      rpc: {
+        url: cfg.rpcUrl,
+        timeoutMs: cfg.rpcTimeoutMs,
+        authenticated: !!cfg.rpcBearerToken,
+        header,
+        state,
+      },
     });
   });
 

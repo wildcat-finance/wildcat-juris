@@ -43,6 +43,19 @@ export function isRpcTransportError(err: unknown): boolean {
   return typeof code === 'string' && RPC_TRANSPORT_CODES.has(code);
 }
 
+/**
+ * Was the endpoint reachable but unwilling — 401/403 from an authenticated gateway? That is a
+ * missing or wrong RPC_BEARER_TOKEN, not a node fault, and it deserves its own message: it
+ * arrives in milliseconds and is fixed by configuration, so reporting it as "the node is not
+ * answering" would send whoever reads it to the wrong place entirely.
+ */
+export function isRpcAuthError(err: unknown): boolean {
+  const e = err as { info?: { responseStatus?: unknown }; message?: unknown } | null;
+  const status = String(e?.info?.responseStatus ?? '');
+  if (/^40[13]\b/.test(status)) return true;
+  return /\b40[13]\b/.test(String(e?.message ?? '')) && /unauthor|forbidden/i.test(String(e?.message ?? ''));
+}
+
 export class Chain {
   readonly provider: JsonRpcProvider;
   readonly arch: Contract;
@@ -62,6 +75,7 @@ export class Chain {
     // Bound every request: ethers defaults to 300s, ten times the serverless budget.
     const endpoint = new FetchRequest(cfg.rpcUrl);
     endpoint.timeout = cfg.rpcTimeoutMs;
+    if (cfg.rpcBearerToken) endpoint.setHeader('authorization', `Bearer ${cfg.rpcBearerToken}`);
     this.provider = new JsonRpcProvider(endpoint, network, { staticNetwork: network });
     this.arch = new Contract(cfg.addresses.archController, ARCH_CONTROLLER_ABI, this.provider);
     this.lens = new Contract(cfg.addresses.marketLens, LENS_ABI, this.provider);
