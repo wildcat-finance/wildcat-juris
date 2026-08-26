@@ -1,5 +1,78 @@
+import { createHash } from 'crypto';
 import { Country } from 'country-state-city';
-import { verifyMessage, verifyTypedData, getAddress, type TypedDataDomain } from 'ethers';
+import {
+  verifyMessage,
+  verifyTypedData,
+  getAddress,
+  hashMessage,
+  TypedDataEncoder,
+  type TypedDataDomain,
+} from 'ethers';
+
+// ========================================================================== //
+//                       Qualifying Lender undertaking                        //
+// ========================================================================== //
+
+/**
+ * The confidentiality undertaking a *lender* gives over a borrower's Identifying Particulars.
+ * The signer is a Qualifying Lender in a Market deployed by that borrower — not the party that
+ * created it — dealing with the consequences of that Market's default, so the wording turns on
+ * "the Market in respect of which that information was disclosed to you", never a Market of
+ * the signer's own. Committed by digest (see QUALIFYING_LENDER_AGREEMENT_SHA256): do not
+ * reword, reflow or re-punctuate it — any edit changes that digest and invalidates previously
+ * issued proofs (regenerate `examples/` if it ever must change).
+ */
+export const QUALIFYING_LENDER_UNDERTAKING =
+  'As a Qualifying Lender, you acknowledge and agree that by receiving any information ' +
+  "relating to the Borrower's Identifying Particulars, you shall not use that information " +
+  'for any purpose other than (i) in connection with the Market in respect of which that ' +
+  'information was disclosed to you and (ii) to pursue any legitimate course of action ' +
+  'arising therefrom.';
+
+/**
+ * The defined terms the undertaking turns on, spelled out so a signer is not agreeing to
+ * language whose meaning lives somewhere they cannot see. Signed alongside the undertaking, and
+ * subject to the same rule: any edit changes every digest. `Market` is deliberately absent — it
+ * is evident on its face. Definitions daisy-chain: `Qualifying Lender` needs `Company` and
+ * `default`; `Identifying Particulars` needs `borrower verification data`.
+ */
+export const QUALIFYING_LENDER_DEFINITION_LIST = [
+  '"Qualifying Lender" means a person who (i) held a debt position (including market tokens) in ' +
+    'the affected Market at the time of the relevant default, or (ii) has acquired such a debt ' +
+    'position, in whole or in part, by transfer, whether before or after the default, and who in ' +
+    'each case can demonstrate control of the relevant address(es) to the satisfaction of the Company.',
+  '"Identifying Particulars" means the minimum information reasonably necessary for a lender to ' +
+    'evaluate and, if it chooses, pursue its own rights and remedies against the borrower entity, ' +
+    'including, but not limited to, the following: the legal name of the borrower entity; its ' +
+    'registration number and jurisdiction of incorporation; its registered office address; and the ' +
+    "name and role of a natural person authorised to accept service on the entity's behalf. For the " +
+    'avoidance of doubt, such information shall include no other borrower verification data.',
+  '"Company" means Wildcat Foundation.',
+  '"default", in respect of a Market, means that the Market has entered a delinquent state and has ' +
+    'incurred the penalty rate (as determined by the grace tracker) for a cumulative period of ' +
+    'ninety (90) days; where a Loan Agreement is in place, that agreement governs instead.',
+  '"borrower verification data" means the identity-verification data collected and retained by the ' +
+    'Company and its identity-verification processor when a borrower is whitelisted, as described ' +
+    'in the Privacy Policy.',
+];
+
+/**
+ * The undertaking and its definitions as one canonical document: the exact bytes the SHA-256
+ * committed in the signature is taken over. The signature carries only that digest, so the
+ * wallet prompt stays readable; the text itself is published (rendered on the page, served by
+ * GET /config, and constant here), so any verifier can recompute the digest and confirm what
+ * was agreed. Change so much as a space and the digest — and every signature over it — changes.
+ */
+export const QUALIFYING_LENDER_AGREEMENT = [
+  QUALIFYING_LENDER_UNDERTAKING,
+  ...QUALIFYING_LENDER_DEFINITION_LIST,
+].join('\n\n');
+
+const sha256Hex = (s: string): string =>
+  '0x' + createHash('sha256').update(s, 'utf8').digest('hex');
+
+/** SHA-256 of QUALIFYING_LENDER_AGREEMENT, 0x-prefixed — the value bound into the signature. */
+export const QUALIFYING_LENDER_AGREEMENT_SHA256 = sha256Hex(QUALIFYING_LENDER_AGREEMENT);
 
 // ========================================================================== //
 //                                   Types                                    //
@@ -12,7 +85,13 @@ export interface FormData {
   /** ISO country code (country-level only; no state/city). */
   country: string;
   acceptTerms: boolean;
-  willingToLitigate: boolean;
+  /**
+   * Agreement to QUALIFYING_LENDER_UNDERTAKING and its definitions (confidentiality of the
+   * Borrower's Identifying Particulars). One checkbox on the page sets this and `acceptTerms`
+   * together; both stay separate fields here because they are separate affirmations in the
+   * signed message.
+   */
+  acceptUndertaking: boolean;
 }
 
 /**
@@ -62,7 +141,7 @@ function getContactInfoError(d: FormData): string | undefined {
 
 function getOptionsError(d: FormData): string | undefined {
   if (!d.acceptTerms) return 'Must accept terms';
-  if (!d.willingToLitigate) return 'Must consent to participate in litigation';
+  if (!d.acceptUndertaking) return 'Must agree to the Qualifying Lender undertaking';
   return undefined;
 }
 
@@ -96,9 +175,15 @@ export const EIP712_TYPES = {
     { name: 'other', type: 'string' },
   ],
   Location: [{ name: 'country', type: 'string' }],
-  Options: [
-    { name: 'acceptTerms', type: 'bool' },
-    { name: 'willingToLitigate', type: 'bool' },
+  Options: [{ name: 'acceptTerms', type: 'bool' }],
+  // The undertaking travels with its own text, so the signature commits to the wording agreed
+  // to — not merely to a boolean whose meaning lives off-chain.
+  // Only the agreement flag and the SHA-256 of the agreed text travel in the signature: the
+  // wallet prompt stays short, and the digest still binds the exact wording (published via
+  // GET /config and QUALIFYING_LENDER_AGREEMENT) beyond alteration.
+  Undertaking: [
+    { name: 'agreed', type: 'bool' },
+    { name: 'sha256', type: 'bytes32' },
   ],
   Claim: [
     { name: 'network', type: 'string' },
@@ -111,6 +196,7 @@ export const EIP712_TYPES = {
     { name: 'contactInfo', type: 'Contact' },
     { name: 'location', type: 'Location' },
     { name: 'options', type: 'Options' },
+    { name: 'undertaking', type: 'Undertaking' },
     { name: 'claim', type: 'Claim' },
   ],
 };
@@ -118,10 +204,8 @@ export const EIP712_TYPES = {
 const toTypedValue = (form: FormData, claim: SignedClaimContext) => ({
   contactInfo: { name: form.name, email: form.email || '', other: form.other || '' },
   location: { country: form.country },
-  options: {
-    acceptTerms: form.acceptTerms,
-    willingToLitigate: form.willingToLitigate,
-  },
+  options: { acceptTerms: form.acceptTerms },
+  undertaking: { agreed: form.acceptUndertaking, sha256: QUALIFYING_LENDER_AGREEMENT_SHA256 },
   claim: {
     network: claim.network,
     market: getAddress(claim.market),
@@ -138,7 +222,8 @@ export const toSignatureString = (form: FormData, claim: SignedClaimContext): st
     `other: ${form.other || ''}`,
     `country: ${form.country}`,
     `acceptTerms: ${form.acceptTerms}`,
-    `willingToLitigate: ${form.willingToLitigate}`,
+    `acceptUndertaking: ${form.acceptUndertaking}`,
+    `undertakingSha256: ${QUALIFYING_LENDER_AGREEMENT_SHA256}`,
     `network: ${claim.network}`,
     `market: ${getAddress(claim.market)}`,
     `penalizedDays: ${claim.penalizedDays}`,
@@ -164,7 +249,7 @@ export function recoverTypedSigner(
   return verifyTypedData(domain, t, message, signature);
 }
 
-/** Recover the signer address from an EIP-712 or personal_sign signature. */
+/** Recover the signer address from an EIP-712 or personal_sign signature (EOA / ECDSA). */
 export function verifySignature(
   form: FormData,
   claim: SignedClaimContext,
@@ -174,4 +259,14 @@ export function verifySignature(
     return verifyMessage(toSignatureString(form, claim), signature.replace('personal_sign_', ''));
   }
   return verifyTypedData(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim), signature);
+}
+
+/**
+ * The 32-byte digest the lender signed — the value an EIP-1271 wallet (e.g. a Safe) checks via
+ * isValidSignature. EIP-712 path: the typed-data hash; personal_sign path: the EIP-191 message hash.
+ */
+export function claimDigest(form: FormData, claim: SignedClaimContext, signature: string): string {
+  return signature.includes('personal_sign_')
+    ? hashMessage(toSignatureString(form, claim))
+    : TypedDataEncoder.hash(domainFor(claim.network), EIP712_TYPES, toTypedValue(form, claim));
 }

@@ -74,6 +74,30 @@ export class Chain {
     return this.cfg.snapshotBlock ?? this.provider.getBlockNumber();
   }
 
+  /** True if the address has contract code (i.e. a smart-contract wallet such as a Safe). */
+  async isContract(address: string): Promise<boolean> {
+    return (await this.provider.getCode(address)) !== '0x';
+  }
+
+  /**
+   * EIP-1271: ask a smart-contract wallet whether `signature` authorizes `digest`. A Safe
+   * returns the magic value 0x1626ba7e once its owner threshold has signed. This is how
+   * Safe (and other contract wallets) "sign" — they have no ECDSA key to recover.
+   */
+  async isValidErc1271(signer: string, digest: string, signature: string): Promise<boolean> {
+    const wallet = new Contract(
+      signer,
+      ['function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)'],
+      this.provider
+    );
+    try {
+      const magic: string = await wallet.isValidSignature(digest, signature);
+      return typeof magic === 'string' && magic.toLowerCase() === '0x1626ba7e';
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Every market registered on the arch-controller. Uses the no-arg
    * getRegisteredMarkets() (one call, selector 0x46762101); falls back to the
@@ -202,10 +226,10 @@ export class Chain {
     return info;
   }
 
-  /** Delinquency state via the verified currentState path, pinned to `blockTag` (default live). */
-  async getMarketState(market: string, blockTag: BlockTag = this.blockTag()): Promise<MarketState> {
+  /** Live delinquency state (verified currentState path). Pass `atBlock` to pin the read. */
+  async getMarketState(market: string, atBlock?: BlockTag): Promise<MarketState> {
     const m = this.market(market);
-    const tag = { blockTag };
+    const tag = { blockTag: atBlock ?? this.blockTag() };
     const [state, grace] = await Promise.all([m.currentState(tag), m.delinquencyGracePeriod(tag)]);
     return {
       isClosed: state.isClosed,
@@ -220,11 +244,8 @@ export class Chain {
    * MarketLensV2.getLenderAccountData; a decode/call failure auto-falls-back to the
    * market's balanceOf. With LENS_MODE=direct, balanceOf is used directly.
    */
-  async readLenderHeld(
-    market: string,
-    lender: string,
-    tag: BlockTag = this.blockTag()
-  ): Promise<bigint> {
+  async readLenderHeld(market: string, lender: string, atBlock?: BlockTag): Promise<bigint> {
+    const tag = atBlock ?? this.blockTag();
     if (this.cfg.lensMode === 'lens') {
       try {
         const data = await this.lens.getLenderAccountData(lender, market, { blockTag: tag });
@@ -245,12 +266,13 @@ export class Chain {
    * Authoritative: sums MarketLensV2 WithdrawalBatchLenderStatus.normalizedAmountOwed
    * across the market's unpaid batches.
    */
-  async readWithdrawalsOwed(
-    market: string,
-    lender: string,
-    tag: BlockTag = this.blockTag()
-  ): Promise<bigint> {
-    const expiries: bigint[] = await this.market(market).getUnpaidBatchExpiries({ blockTag: tag });
+  async readWithdrawalsOwed(market: string, lender: string, atBlock?: BlockTag): Promise<bigint> {
+    const tag = atBlock ?? this.blockTag();
+    // Copy the frozen ethers Result into a plain array: passing a Result back in as a
+    // call argument throws ("Cannot assign to read only property '0'") during encoding.
+    const expiries: bigint[] = [
+      ...(await this.market(market).getUnpaidBatchExpiries({ blockTag: tag })),
+    ];
     if (expiries.length === 0) return 0n;
     const statuses = await this.lens.getWithdrawalBatchesDataWithLenderStatus(market, expiries, lender, {
       blockTag: tag,
