@@ -65,7 +65,8 @@ Then open the site, enter the borrower address, connect a wallet, and run an eli
 | `INCLUDE_WITHDRAWALS` | no | `true` | Count queued/expired withdrawals toward owed. |
 | `MIN_OWED_WEI` | no | `0` | Dust threshold below which a position is ignored. |
 | `LENS_MODE` | no | `lens` | `lens` (MarketLensV2) or `direct` (`balanceOf`) for the held read. |
-| `DEBUG_MODE` | no | `false` | **Keep off in production.** Fakes holdings + relaxes the default gate for testing. |
+| `DEBUG_MODE` | no | `false` | **Keep off in production.** Fakes holdings + relaxes the default gate, for every visitor at once. |
+| `DEBUG_KEY` | no | — | Long random secret (≥24 chars) enabling per-browser debug sessions via `/#dbg=<key>`. Safe to set in production; unset makes sessions unreachable. |
 | `SNAPSHOT_BLOCK` | no | — | Pin all reads to a block (needs an archive node). Unset = live. |
 | `MULTICALL3` | no | canonical | Multicall3 address; only override if your chain uses a non-standard one. |
 
@@ -75,6 +76,23 @@ ignored on Vercel.
 > **Never set `DEBUG_MODE=true` in production.** With it on, any lender is treated as holding
 > ≥100 of the underlying and the in-default requirement is relaxed — the signed proof will
 > (honestly) report that the holdings were assumed, which is not a real claim.
+
+### Dry-running the hosted site (`DEBUG_KEY`)
+
+`DEBUG_KEY` is the production-safe way to exercise the flow when no wallet you control holds a
+position in a defaulted market. Set it to a long random secret (`openssl rand -hex 32`), then
+open the normal page as `https://<host>/#dbg=<DEBUG_KEY>`; `#dbg=off` ends the session.
+
+The fudge then applies only to the browser holding the session cookie — every other visitor
+gets honest reads at the same time — and it lapses after 12 hours. The secret rides in the URL
+fragment, which browsers never send to a server, so it does not appear in Vercel access logs,
+`Referer` headers or proxy caches; the page strips it from the URL and history immediately.
+Nothing on the page advertises this, and with `DEBUG_KEY` unset (or under 24 characters)
+`/debug/session` 404s exactly like an unregistered path, for a right key and a wrong one alike.
+
+Claims signed inside a session use a distinct EIP-712 domain, `Wildcat Claims [DEBUG - NOT
+EVIDENCE]` — visible in the wallet prompt — so a dry-run proof will not verify against the
+production domain and cannot be mistaken for, or submitted as, a real claim.
 
 ## How requests are routed
 

@@ -89,8 +89,16 @@ export class Eligibility {
    * Check one lender against one market. Eligible when the market is in default AND the
    * lender holds a non-dust position (market-token balance plus, when enabled, queued/
    * expired withdrawals), read live.
+   *
+   * `debug` floors the holdings (see below). It is a per-call argument rather than a read of
+   * `cfg.debugMode` so one browser can dry-run the flow while every other request to the same
+   * process stays honest; it defaults to the process-wide flag for callers that predate this.
    */
-  async eligibleClaim(account: string, market: string): Promise<ClaimResult> {
+  async eligibleClaim(
+    account: string,
+    market: string,
+    debug: boolean = this.cfg.debugMode
+  ): Promise<ClaimResult> {
     // Resolve the block FIRST and pin every read to it. Reading at 'latest' while stamping a
     // separately-fetched block number lets the figures come from a different block than the
     // signature commits to, so an honest lender's proof would fail archive replay (interest
@@ -115,7 +123,7 @@ export class Eligibility {
 
     // DEBUG ONLY: assume the lender holds >= 100 underlying so the signing flow is testable
     // without a real position. Does not bypass signature verification or the default gate.
-    if (this.cfg.debugMode) {
+    if (debug) {
       const floor = 100n * 10n ** BigInt(info.assetDecimals);
       if (heldWei + withdrawalsWei < floor) heldWei = floor - withdrawalsWei;
     }
@@ -124,7 +132,7 @@ export class Eligibility {
     const summary = this.summary(info, state);
     // Non-zero holdings are a sufficient gate: anyone with a position is an impacted lender
     // and is entitled to the data. Default status (inDefault/penalizedDays) is reported as
-    // context but does not gate eligibility. (DEBUG_MODE still floors holdings for testing.)
+    // context but does not gate eligibility. (A debug caller still floors holdings for testing.)
     const eligible = owed > this.cfg.minOwedWei;
 
     return {

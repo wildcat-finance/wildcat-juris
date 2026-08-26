@@ -122,6 +122,30 @@ describe('eligibleClaim (live default gate)', () => {
     expect(r.amountOwedWei).toBe((100n * 10n ** 18n).toString());
   });
 
+  it('DEBUG: the per-call flag floors holdings without the process-wide switch', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 0n },
+    });
+    // baseCfg.debugMode is false: one browser's dry run must not need the process-wide flag.
+    const r = await new Eligibility(chain, baseCfg).eligibleClaim('0xLENDER', '0xM', true);
+    expect(r.eligible).toBe(true);
+    expect(r.amountOwedWei).toBe((100n * 10n ** 18n).toString());
+  });
+
+  it('DEBUG: an explicit false stays honest even with the process-wide switch on', async () => {
+    const chain = fakeChain({
+      infos: { '0xM': info('0xM') },
+      states: { '0xM': state({ timeDelinquent: DEFAULTED }) },
+      held: { '0xM': 0n },
+    });
+    const cfg = { ...baseCfg, debugMode: true };
+    const r = await new Eligibility(chain, cfg).eligibleClaim('0xLENDER', '0xM', false);
+    expect(r.eligible).toBe(false);
+    expect(r.amountOwedWei).toBe('0');
+  });
+
   it('DEBUG: allows a not-yet-defaulted but penalized market, and reports penalizedDays', async () => {
     const tDelq = BigInt(1000 + 5 * 86_400); // 5 days past the 1000s grace, well under default
     const chain = fakeChain({
