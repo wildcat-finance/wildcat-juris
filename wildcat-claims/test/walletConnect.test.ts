@@ -41,7 +41,7 @@ describe('connecting a wallet', () => {
 
   it('tells a debug session to connect its own wallet', () => {
     const banner = indexHtml.match(/id="debugBanner"[^>]*>([\s\S]*?)<\/div>/)![1];
-    expect(banner).toMatch(/connect your own wallet/i);
+    expect(banner).toMatch(/connect an EOA or Safe/i);
     expect(banner).toMatch(/#dbg=off/);
   });
 });

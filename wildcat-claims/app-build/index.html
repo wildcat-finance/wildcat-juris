@@ -74,7 +74,7 @@
         <p>Find an affected market by its borrower, then connect the wallet you lent with to produce a signed proof of your eligibility as an impacted lender.</p>
       </header>
 
-      <div id="debugBanner" class="banner hidden">⚠ DEBUG SESSION — eligibility is faked (any lender is assumed to hold ≥100 of the underlying) and anything signed here goes under a separate <code>[DEBUG - NOT EVIDENCE]</code> domain, so it cannot verify as a real claim. Connect your own wallet as usual and sign with it — the holdings floor applies to whichever address you connect, so you do not need one that really holds a position. Dry runs only. End the session by loading <code>#dbg=off</code>.</div>
+      <div id="debugBanner" class="banner hidden">⚠ DEBUG SESSION — holdings are faked (any address is assumed to hold ≥100 of the underlying) and anything signed here uses the <code>[DEBUG - NOT EVIDENCE]</code> domain, so it cannot verify as a real claim. Connect an EOA or Safe as normal. End with <code>#dbg=off</code>.</div>
 
       <div class="card">
         <h2>Context</h2>
