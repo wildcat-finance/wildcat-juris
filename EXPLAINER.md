@@ -89,12 +89,6 @@ Two signing schemes are supported so the frontend can fall back gracefully:
 
 Either way the result is the **recovered Ethereum address**, which is treated as the user's identity. The form is also validated server-side: country/state/city are checked against the `country-state-city` dataset, contact info requires at least an email or "other" field, email format is regex-checked, and the user must accept terms and opt into at least one of "speak to law enforcement" / "litigate".
 
-### Persistence
-
-- **`simple-level.ts`** — a thin wrapper over `levelup`/`leveldown` (disk) or `memdown` (in-memory). Keys and values are `JSON.stringify`'d on write and parsed on read; missing keys return `null` instead of throwing. Includes a stream-based `copy()` for snapshotting a DB. The on-disk DB lives at `src/.db/` (gitignored).
-- **`database.ts`** — domain API on top of it: `putAccount` (stores the account keyed by lowercased address and maintains an `addresses` index array), `getAccount`, `getAllAddresses`.
-- **`sheets.ts`** — connects to a Google Sheet via a service account (`.google.json`), ensures the header row, and **upserts** the submission (updates the existing row matching the Ethereum address, otherwise appends). This is the human-facing output the coordination team reads.
-
 ## Build & run
 
 The project has **no `build`/`start` npm scripts** — you compile with `tsc` and run the emitted JS with `node`.
