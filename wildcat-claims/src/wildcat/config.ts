@@ -50,8 +50,20 @@ export interface WildcatConfig {
    * DEBUG (testing only): when true, any lender being checked is assumed to hold >= 100 of
    * the underlying in every market, so testers can exercise the claim-signing flow without a
    * real position. Signatures are still verified normally. Env: DEBUG_MODE. Off in production.
+   *
+   * Process-wide, so it fakes eligibility for every visitor at once: use it locally, never on
+   * the hosted site. For a dry run against production use `debugKey` instead.
    */
   debugMode: boolean;
+
+  /**
+   * Shared secret that lets one browser open a debug session — the same fudge as `debugMode`,
+   * scoped to whoever holds the secret, so ordinary visitors keep seeing honest reads while
+   * the team dry-runs the flow. Env: DEBUG_KEY. Unset (the default, including production)
+   * makes debug sessions unreachable and /debug/session indistinguishable from a dead route.
+   * See src/debugSession.ts for how one is opened.
+   */
+  debugKey?: string;
 }
 
 /**
@@ -116,5 +128,9 @@ export function loadConfig(): WildcatConfig {
     minOwedWei: BigInt(process.env.MIN_OWED_WEI ?? '0'),
     lensMode,
     debugMode: ['1', 'true', 'yes'].includes((process.env.DEBUG_MODE ?? '').toLowerCase()),
+    // A short key is worse than none: it invites guessing at a gate that fakes eligibility.
+    debugKey: (process.env.DEBUG_KEY ?? '').trim().length >= 24
+      ? (process.env.DEBUG_KEY ?? '').trim()
+      : undefined,
   };
 }

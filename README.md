@@ -122,7 +122,14 @@ the deployed function can reach your `RPC_URL`, and `DEBUG_MODE` must stay off i
   shape is used here. What remains unconfirmed is live *data* behaviour, not the ABIs.
 - **`DEBUG_MODE`** (testing only) assumes any lender holds ≥100 of the underlying, so the
   signing flow can be exercised without a real position. Signatures are still verified.
-  **Never enable it in production** — the proof will (honestly) report the holdings were assumed.
+  It is process-wide, so it fakes eligibility for every visitor at once: local use only.
+- **`DEBUG_KEY`** is the hosted equivalent, scoped to one browser. Load the normal page as
+  `/#dbg=<DEBUG_KEY>` and that browser gets the fudge for 12 hours while everyone else keeps
+  seeing honest reads; `/#dbg=off` ends it. The secret travels in the URL fragment, which is
+  never sent to a server, so it stays out of access logs and `Referer` headers, and there is no
+  discoverable route: with `DEBUG_KEY` unset, `/debug/session` 404s like a path that was never
+  registered. Anything signed in a session uses a separate `[DEBUG - NOT EVIDENCE]` EIP-712
+  domain, so a dry-run proof cannot verify as a real claim — the wallet prompt says so too.
 - **V2 only** — assumes V2 markets (per Wildcat). V1 markets would need the V1 lens and
   market wrappers.
 - **Default definition** is the interim `grace + 90 days` rule, read live — no historical

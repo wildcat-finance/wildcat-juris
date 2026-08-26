@@ -20,6 +20,15 @@ import {
   QUALIFYING_LENDER_AGREEMENT_SHA256,
   type SubmitData,
 } from './utils';
+import {
+  DEBUG_COOKIE,
+  clearDebugCookieHeader,
+  debugCookieHeader,
+  mintDebugToken,
+  parseCookies,
+  secretEquals,
+  verifyDebugToken,
+} from './debugSession';
 
 function asAddress(v: unknown): string | null {
   try {
@@ -66,6 +75,20 @@ export function createApp(): Express {
     );
   }
 
+  /**
+   * Is this request a debug one? True for the process-wide DEBUG_MODE (local development) or
+   * for a browser holding a live debug-session cookie. Every handler asks per request, so a
+   * dry run never changes what anyone else sees.
+   */
+  const isDebug = (req: Request): boolean =>
+    cfg.debugMode ||
+    (!!cfg.debugKey &&
+      verifyDebugToken(cfg.debugKey, parseCookies(req.headers.cookie)[DEBUG_COOKIE], Date.now()));
+
+  /** Vercel terminates TLS upstream, so trust the forwarded scheme for the Secure attribute. */
+  const isHttps = (req: Request): boolean =>
+    req.secure || String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() === 'https';
+
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -73,13 +96,15 @@ export function createApp(): Express {
   app.get('/health', (_req, res) => res.json({ ok: true, network: cfg.network }));
 
   // Public config the frontend needs to render context and build EIP-712 typed data.
-  app.get('/config', (_req, res) =>
+  app.get('/config', (req: Request, res: Response) =>
     res.json({
       network: cfg.network,
       chainId: chainIdFor(cfg.network),
       borrower: cfg.borrower ?? null,
       defaultBufferDays: Math.round(cfg.defaultBufferSec / 86_400),
-      domain: domainFor(cfg.network),
+      // Debug sessions get their own domain, so the page signs, and /submit verifies, under a
+      // name that cannot be mistaken for a real claim. See DEBUG_DOMAIN_NAME.
+      domain: domainFor(cfg.network, isDebug(req)),
       // The undertaking a lender gives, its definitions, the canonical document they form, and
       // that document's SHA-256 — the value bound into the signature. Published so any client can
       // render the exact wording and any verifier can recompute the digest.
@@ -87,7 +112,7 @@ export function createApp(): Express {
       undertakingDefinitions: QUALIFYING_LENDER_DEFINITION_LIST,
       undertakingAgreement: QUALIFYING_LENDER_AGREEMENT,
       undertakingSha256: QUALIFYING_LENDER_AGREEMENT_SHA256,
-      debug: cfg.debugMode,
+      debug: isDebug(req),
     })
   );
 
@@ -111,7 +136,8 @@ export function createApp(): Express {
     if (!account) return res.status(400).send('Invalid account address');
     if (!market) return res.status(400).send('Invalid market address');
     try {
-      const result = await eligibility.eligibleClaim(account, market);
+      const debug = isDebug(req);
+      const result = await eligibility.eligibleClaim(account, market, debug);
       return res.json({
         ...result,
         claim: {
@@ -121,7 +147,7 @@ export function createApp(): Express {
           amountOwedWei: result.amountOwedWei,
           asOfBlock: result.asOfBlock,
         },
-        debug: cfg.debugMode,
+        debug,
       });
     } catch (err: any) {
       console.error(`/eligibility ${account}/${market}:`, err.message);
@@ -152,12 +178,19 @@ export function createApp(): Express {
     // Verify the signature authorizes `lender`. EOAs are checked by ECDSA recovery; smart-
     // contract wallets (e.g. a Safe multisig) are checked via EIP-1271 isValidSignature. Either
     // way the signature proves control of `lender` — we never trust a bare client-supplied address.
+    const debug = isDebug(req);
     let valid = false;
     try {
       if (await chain.isContract(lender)) {
-        valid = await chain.isValidErc1271(lender, claimDigest(data.form, data.claim, signature), signature);
+        valid = await chain.isValidErc1271(
+          lender,
+          claimDigest(data.form, data.claim, signature, debug),
+          signature
+        );
       } else {
-        valid = verifySignature(data.form, data.claim, signature).toLowerCase() === lender.toLowerCase();
+        valid =
+          verifySignature(data.form, data.claim, signature, debug).toLowerCase() ===
+          lender.toLowerCase();
       }
     } catch {
       valid = false;
@@ -167,7 +200,7 @@ export function createApp(): Express {
     // Server-side re-check (live): never trust client-supplied eligibility.
     let result;
     try {
-      result = await eligibility.eligibleClaim(lender, market);
+      result = await eligibility.eligibleClaim(lender, market, debug);
     } catch (err: any) {
       console.error('/submit eligibility check:', err.message);
       return res.status(500).send('Failed to verify eligibility');
@@ -185,16 +218,43 @@ export function createApp(): Express {
       penalizedDays: data.claim.penalizedDays,
       asOfBlock: data.claim.asOfBlock,
       submittedAt: new Date().toISOString(),
-      debug: cfg.debugMode,
+      debug,
     });
+  });
+
+  // Open or close a debug session for this browser. The page posts the shared secret here once,
+  // having picked it up from the URL fragment (never sent to a server, so it stays out of access
+  // logs and Referer headers) and stripped it. With DEBUG_KEY unset this 404s, and a wrong key
+  // 404s identically: nothing distinguishes the route from one that was never registered, and
+  // nothing tells a prober whether the deployment has a key at all.
+  app.post('/debug/session', (req: Request, res: Response) => {
+    if (!cfg.debugKey) return res.status(404).send('Not found');
+
+    if ((req.body ?? {}).end === true) {
+      res.setHeader('Set-Cookie', clearDebugCookieHeader(isHttps(req)));
+      return res.json({ debug: false });
+    }
+
+    const key = (req.body ?? {}).key;
+    if (typeof key !== 'string' || !secretEquals(key, cfg.debugKey)) {
+      return res.status(404).send('Not found');
+    }
+    res.setHeader('Set-Cookie', debugCookieHeader(mintDebugToken(cfg.debugKey, Date.now()), isHttps(req)));
+    return res.json({ debug: true });
   });
 
   // Independently verify a produced proof (for the Wildcat Foundation). The implementation
   // lives in src/verifyProof.ts so this route and scripts/demo-server.js share one copy —
   // they drifted apart when each held its own, and the verifier ended up stricter than the
   // issuer. See that file for what each layer establishes.
+  //
+  // The session's debug flag goes with it: a dry run must be checkable end to end, and a
+  // dry-run proof must still read as invalid to anyone outside that session.
   app.post('/verify', async (req: Request, res: Response) => {
-    const out = await verifyProof({ cfg, chain, eligibility }, req.body);
+    const out = await verifyProof(
+      { cfg, chain, eligibility, debug: isDebug(req) },
+      req.body
+    );
     return out.status === 200 ? res.json(out.body) : res.status(400).send(out.error);
   });
 

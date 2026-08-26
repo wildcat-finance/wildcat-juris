@@ -16,6 +16,13 @@ export interface VerifyDeps {
   cfg: WildcatConfig;
   chain: Pick<Chain, 'isContract' | 'isValidErc1271'>;
   eligibility: Pick<Eligibility, 'verifyClaimAtBlock'>;
+  /**
+   * Whether the caller is inside a debug session (see src/debugSession.ts). A dry run signs
+   * under its own EIP-712 domain, so the verifier has to expect that domain to check one end
+   * to end — and must keep expecting the production domain for everyone else, or a dry-run
+   * proof would verify as real evidence.
+   */
+  debug?: boolean;
 }
 
 /** 400 with a reason the caller can act on, or 200 with the layered verdict. */
@@ -51,7 +58,7 @@ function asAddress(v: unknown): string | null {
  * demanding more of a proof than the issuer demands of a claim.
  */
 export async function verifyProof(
-  { cfg, chain, eligibility }: VerifyDeps,
+  { cfg, chain, eligibility, debug = false }: VerifyDeps,
   payload: unknown
 ): Promise<VerifyOutcome> {
   const { signed, proof } = (payload ?? {}) as {
@@ -159,7 +166,7 @@ export async function verifyProof(
   // ---- 2 · Binding: is this bound to THIS deployment? -----------------------------------
   const network = typeof claim.network === 'string' ? claim.network : cfg.network;
   const networkMatches = network === cfg.network;
-  const expectedDomain = domainFor(network);
+  const expectedDomain = domainFor(network, debug);
   // personal_sign carries no domain: the text's own `network` line is the only binding it has,
   // so `matches` is null — absent, rather than contradicted.
   const domainMatches = typed
