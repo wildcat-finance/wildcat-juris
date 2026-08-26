@@ -1,5 +1,12 @@
 # Adapting Juris → Wildcat Lender Claim-Intake — Technical Spec
 
+> **Superseded — kept as the record of what was planned, not what was built.** Several decisions
+> "locked" below were reversed during implementation: there is no persistence (LevelDB and the
+> Google Sheet were both dropped, and the lender's output is a self-contained verifiable proof
+> instead), the law-enforcement/litigation consent flags were removed in favour of the Qualifying
+> Lender undertaking, and eligibility turns on holdings alone rather than on a market being
+> delinquent or penalty-active. For what the service actually does, read EXPLAINER.md.
+
 ## 0. Goal & scope
 
 Fork `juris.ndx.fi` into a claim-intake tool for **lenders in distressed Wildcat V2 markets**. A lender connects a wallet; the service determines on-chain whether that address is a lender in any **delinquent or penalty-active** Wildcat market and how much it is owed; if eligible, the lender signs a claim form (contact, location, consent to litigate / speak to law enforcement) which is persisted to LevelDB and mirrored to a Google Sheet for the legal/coordination team.
