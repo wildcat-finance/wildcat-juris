@@ -25,7 +25,7 @@ npm run examples
 | `penalizedDays` | `118`                                        |
 | `amountOwedWei` | `250000000000` (250,000 of a 6-decimal asset)|
 | `asOfBlock`     | `20812345`                                   |
-| `undertaking`   | `{ agreed: true, sha256: 0xafe9…d5cf }`      |
+| `undertaking`   | `{ agreed: true, sha256: 0xb53a…5026 }`      |
 | signer          | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
 
 ## Files
@@ -66,7 +66,7 @@ a proof is checkable end to end:
 ```bash
 # the digest committed in the signature, recomputed from the published text
 printf '%s' "$(cat examples/qualifying-lender-agreement.txt)" | sha256sum
-# -> afe92958122695aae83dcb4ff5eb958c889f21adf0b6437aef7fdd1c8b55d5cf
+# -> b53a35c92425b536da60d5c926aba61eaa9fc6482b2993fe06f905bd9c625026
 ```
 
 The definitions are carried because the undertaking turns on them: `Qualifying Lender` and
