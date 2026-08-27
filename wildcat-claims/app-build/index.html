@@ -255,6 +255,7 @@
       let lastSigned = null, lastProof = null, lastZipBase = "wildcat-claim-proof";
       let provider = null;   // active ethers provider (injected EOA wallet, or the Safe App)
       let safeMode = false;  // true when running inside Safe{Wallet} as a Custom App
+      let walletConnectPending = false;
 
       // --- Delinquency / penalty timing (derived from the grace tracker) ----------
       // timeDelinquent counts seconds the market has been delinquent; the penalty APR
@@ -342,24 +343,60 @@
 
       // ---- 2 · wallet ----------------------------------------------------------
       $("connectBtn").addEventListener("click", async () => {
-        if (safeMode) return; // already connected as a Safe
-        if (!window.ethereum) return setStatus($("connectStatus"), "No Ethereum wallet detected.", "err");
+        // Every branch below reports something. A button that silently does nothing is
+        // indistinguishable from a broken page.
+        if (safeMode) {
+          return setStatus($("connectStatus"), "Already connected as a Safe — sign with your owners.", "");
+        }
+        if (!window.ethereum) {
+          return setStatus(
+            $("connectStatus"),
+            "No injected wallet found. Unlock MetaMask (or another extension wallet) and reload; " +
+              "if it is installed, check it has permission to run on this site.",
+            "err"
+          );
+        }
+        if (walletConnectPending) {
+          return setStatus(
+            $("connectStatus"),
+            "A wallet connection request is already pending. Open MetaMask to approve or reject it; " +
+              "if no request is visible, reload this page and try again.",
+            "err"
+          );
+        }
+        walletConnectPending = true;
+        setStatus($("connectStatus"), "Waiting for wallet approval in MetaMask…", "");
         try {
           provider = new BrowserProvider(window.ethereum);
           const accts = await provider.send("eth_requestAccounts", []);
+          if (!accts.length) throw new Error("The wallet returned no accounts.");
           account = getAddress(accts[0]);
           $("walletInfo").textContent = "Connected: " + account;
           show($("walletInfo"));
           setStatus($("connectStatus"), "", "");
           if (selectedMarket) checkEligibility();
         } catch (e) {
-          setStatus($("connectStatus"), "Connection failed: " + (e.shortMessage || e.message), "err");
+          // ethers wraps provider errors, so prefer the original MetaMask code when present.
+          const code = e && (e.info?.error?.code ?? e.error?.code ?? e.code);
+          const message = code === 4001 || code === "ACTION_REJECTED"
+            ? "Connection cancelled in MetaMask."
+            : code === -32002
+            ? "A wallet connection request is already pending. Open MetaMask to approve or reject it."
+            : "Connection failed: " + (e.shortMessage || e.message || "Unknown wallet error");
+          setStatus($("connectStatus"), message, "err");
+        } finally {
+          walletConnectPending = false;
         }
       });
 
       // When opened inside Safe{Wallet} as a Custom App, auto-connect to the Safe. Signing then
       // routes to the Safe's owners and produces an EIP-1271 signature the server accepts.
       async function trySafeApp() {
+        // A Safe App is loaded by Safe{Wallet} INSIDE an iframe. Standalone, window.parent is
+        // this same window, so getInfo() posts its handshake to itself — and anything that
+        // answers it flips safeMode on a page that is not in a Safe at all, disabling the
+        // connect button and making its handler a silent no-op. Not in a frame, not a Safe.
+        if (window.self === window.top) return;
         try {
           const sdk = new SafeAppsSDK();
           const info = await Promise.race([
